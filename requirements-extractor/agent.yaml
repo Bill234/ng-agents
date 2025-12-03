@@ -1,0 +1,232 @@
+id: agent:requirements-extractor
+name: RequirementsExtractor
+version: 1
+purpose: Extracts structured agent specifications from natural language requirements
+tags:
+  - requirements
+  - extraction
+  - specification
+  - parsing
+tools: []
+behaviorTree:
+  type: sequence
+  name: Extract Requirements
+  children:
+    - type: prompt
+      name: Extract Specification
+      description: Parse natural language requirements into structured spec
+      promptRef: extractRequirements
+      inputQuery:
+        requirements: "{{input.requirements}}"
+        examples: "{{input.examples}}"
+      outputUpdate:
+        spec: "{{result}}"
+prompts:
+  extractRequirements:
+    version: 1
+    systemMessage: You are an expert AI agent architect. Your task is to extract a structured specification from natural
+      language requirements for building an agent.
+    template: >-
+      Extract a structured agent specification from the following requirements.
+
+
+      ## Requirements
+
+      {{requirements}}
+
+
+      {{#if examples}}
+
+      ## Example Agents for Reference
+
+      {{json examples}}
+
+      {{/if}}
+
+
+      Provide the specification in the following JSON format:
+
+      ```json
+
+      {
+        "name": "AgentName",
+        "purpose": "Clear description of what the agent does",
+        "inputs": [
+          { "name": "inputName", "type": "string|number|object|array", "description": "What this input is for" }
+        ],
+        "outputs": [
+          { "name": "outputName", "type": "string|number|object|array", "description": "What this output contains" }
+        ],
+        "successCriteria": [
+          { "metric": "metricPath", "threshold": 1.0, "operator": "eq|gt|gte|lt|lte" }
+        ],
+        "requiredCapabilities": ["capability1", "capability2"],
+        "constraints": ["constraint1", "constraint2"],
+        "testCases": [
+          { "name": "testName", "input": {}, "expectedBehavior": "description" }
+        ]
+      }
+
+      ```
+
+
+      IMPORTANT:
+
+      - Infer reasonable defaults for unspecified elements
+
+      - Success criteria should be measurable
+
+      - Required capabilities should describe WHAT the agent needs to do (e.g., "execute Lean code", "query database"),
+      not specific tool names
+
+      - Be specific about input/output types
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        name:
+          type: string
+        purpose:
+          type: string
+        inputs:
+          type: array
+        outputs:
+          type: array
+        successCriteria:
+          type: array
+        requiredCapabilities:
+          type: array
+          items:
+            type: string
+        constraints:
+          type: array
+          items:
+            type: string
+        testCases:
+          type: array
+      required:
+        - name
+        - purpose
+        - inputs
+        - outputs
+        - requiredCapabilities
+    examples:
+      - input:
+          requirements: Build a calculator agent that can add two numbers
+        output:
+          name: AddCalculator
+          purpose: Adds two numbers and returns the sum
+          inputs:
+            - name: a
+              type: number
+              description: First number to add
+            - name: b
+              type: number
+              description: Second number to add
+          outputs:
+            - name: sum
+              type: number
+              description: The sum of a + b
+          successCriteria: []
+          requiredCapabilities:
+            - arithmetic
+          constraints: []
+          testCases:
+            - name: Add5And3
+              input:
+                a: 5
+                b: 3
+              expectedBehavior: "Returns sum: 8"
+      - input:
+          requirements: Build a message classifier agent that takes a message and classifies it as question, task, or feedback
+        output:
+          name: MessageClassifier
+          purpose: "Classifies messages into categories: question, task, or feedback"
+          inputs:
+            - name: message
+              type: string
+              description: The message to classify
+          outputs:
+            - name: classification
+              type: string
+              description: "One of: question, task, feedback"
+            - name: confidence
+              type: number
+              description: Confidence score 0-1
+          successCriteria:
+            - metric: confidence
+              threshold: 0.5
+              operator: gte
+          requiredCapabilities:
+            - text classification
+            - natural language understanding
+          constraints:
+            - Must return one of the three categories
+          testCases:
+            - name: ClassifyQuestion
+              input:
+                message: How do I reset my password?
+              expectedBehavior: "Returns classification: question"
+            - name: ClassifyTask
+              input:
+                message: Please update my email address
+              expectedBehavior: "Returns classification: task"
+      - input:
+          requirements: Build a sentiment analyzer that takes text and returns whether it's positive, negative, or neutral with a
+            score
+        output:
+          name: SentimentAnalyzer
+          purpose: Analyzes text sentiment and returns classification with confidence score
+          inputs:
+            - name: text
+              type: string
+              description: The text to analyze
+          outputs:
+            - name: sentiment
+              type: string
+              description: "One of: positive, negative, neutral"
+            - name: score
+              type: number
+              description: Sentiment score from -1 (negative) to 1 (positive)
+          successCriteria: []
+          requiredCapabilities:
+            - sentiment analysis
+            - text understanding
+          constraints:
+            - Score must be between -1 and 1
+          testCases:
+            - name: PositiveText
+              input:
+                text: This is amazing!
+              expectedBehavior: Returns positive sentiment
+      - input:
+          requirements: Build a summarizer agent that takes long text and produces a concise summary
+        output:
+          name: TextSummarizer
+          purpose: Summarizes long text into a concise summary
+          inputs:
+            - name: text
+              type: string
+              description: The text to summarize
+            - name: maxLength
+              type: number
+              description: Maximum length of summary in words
+          outputs:
+            - name: summary
+              type: string
+              description: The summarized text
+            - name: keyPoints
+              type: array
+              description: List of key points extracted
+          successCriteria: []
+          requiredCapabilities:
+            - text summarization
+            - key point extraction
+          constraints:
+            - Summary should not exceed maxLength
+          testCases:
+            - name: SummarizeArticle
+              input:
+                text: Long article text...
+                maxLength: 50
+              expectedBehavior: Returns concise summary under 50 words

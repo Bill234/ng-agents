@@ -1,0 +1,126 @@
+type: suite
+name: Agent Factory Live Build Test
+description: |
+  Actually runs the Agent Factory to build an agent from requirements.
+  Requires real LLM and MongoDB.
+
+beforeAll:
+  sequence:
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        exports:
+          - AgentLoader
+          - promptDefinition
+          - subagentDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/bt/src/index.js"
+        exports:
+          - BTPrototypeFactory
+          - actionDefinition
+          - sequenceDefinition
+          - selectorDefinition
+          - parallelDefinition
+          - conditionDefinition
+          - repeatDefinition
+          - succeedDefinition
+          - failDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - loadAgentFactoryDefinition
+          - seedAgentFactorySubAgents
+    - script: |
+        const { ResourceManager } = await import('/Users/williampearson/Legion/packages/ng/handles/resource-manager/src/index.js');
+        blackboard.resourceManager = await ResourceManager.getInstance();
+        blackboard.agentFactoryDef = await blackboard.loadAgentFactoryDefinition();
+
+        // Register all BT nodes
+        const { BTPrototypeFactory, actionDefinition, sequenceDefinition, selectorDefinition, parallelDefinition, conditionDefinition, repeatDefinition, succeedDefinition, failDefinition, promptDefinition, subagentDefinition } = blackboard;
+        BTPrototypeFactory.clearCache();
+        BTPrototypeFactory._definitions.clear();
+        BTPrototypeFactory.register('action', actionDefinition);
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('selector', selectorDefinition);
+        BTPrototypeFactory.register('parallel', parallelDefinition);
+        BTPrototypeFactory.register('condition', conditionDefinition);
+        BTPrototypeFactory.register('repeat', repeatDefinition);
+        BTPrototypeFactory.register('succeed', succeedDefinition);
+        BTPrototypeFactory.register('fail', failDefinition);
+        BTPrototypeFactory.register('prompt', promptDefinition);
+        BTPrototypeFactory.register('subagent', subagentDefinition);
+    - getHandle: agentStorage
+    - script: |
+        const { seedAgentFactorySubAgents, agentStorage } = blackboard;
+        blackboard.seededAgentIds = await seedAgentFactorySubAgents(agentStorage);
+        console.log('Seeded Agent Factory sub-agents:', blackboard.seededAgentIds);
+    - log: "Setup complete"
+
+afterAll:
+  sequence:
+    - script: |
+        const { agentStorage, seededAgentIds } = blackboard;
+        if (agentStorage && seededAgentIds?.length > 0) {
+          for (const agentId of seededAgentIds) {
+            try {
+              await agentStorage.deleteAgent(agentId);
+            } catch (e) {
+              // Ignore errors during cleanup
+            }
+          }
+        }
+    - log: "Cleanup complete"
+
+children:
+  - name: "should build a simple file reader agent"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef } = blackboard;
+
+          const requirements = `
+            Build an agent that reads a file and summarizes its contents.
+
+            The agent should:
+            1. Take a file path as input
+            2. Read the file contents using the Read tool
+            3. Use an LLM prompt to generate a summary
+            4. Return the summary as output
+
+            Success criteria: The agent should produce a non-empty summary string.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+
+          console.log('Starting Agent Factory execution...');
+          console.log('Requirements:', requirements);
+
+          const testFilePath = '/Users/williampearson/Legion/packages/ng/agents/agent-factory/__tests__/fixtures/sample-text.txt';
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { filePath: testFilePath }
+            },
+            timeoutMs: 480000
+          });
+
+          console.log('Agent Factory result status:', result.status);
+          console.log('Agent Factory result success:', result.success);
+
+          if (result.handles && result.handles.length > 0) {
+            console.log('Available handles:', result.handles.map(h => h[0]));
+          }
+
+          const generatedAgentHandle = result.handles?.find(h => h[0] === 'generatedAgent');
+          if (generatedAgentHandle) {
+            const generatedAgent = generatedAgentHandle[1].handle;
+            console.log('Generated agent id:', generatedAgent?.id);
+            console.log('SUCCESS: Agent generation completed!');
+          }
+
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+      - assert: "{{result}}.handles !== undefined"
+        message: "handles should be defined"

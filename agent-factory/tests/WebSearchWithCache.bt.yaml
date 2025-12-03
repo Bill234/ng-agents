@@ -7,13 +7,13 @@ description: |
 beforeAll:
   sequence:
     - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        from: "@ng/agents-definitions"
         exports:
           - AgentLoader
           - subagentDefinition
           - promptDefinition
     - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/bt/src/index.js"
+        from: "@ng/agents-bt"
         exports:
           - BTPrototypeFactory
           - actionDefinition
@@ -21,12 +21,12 @@ beforeAll:
           - selectorDefinition
           - conditionDefinition
     - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        from: "@ng/agents-agent-factory"
         exports:
           - seedAgentFactorySubAgents
           - loadAgentFactoryDefinition
     - script: |
-        const { ResourceManager } = await import('/Users/williampearson/Legion/packages/ng/handles/resource-manager/src/index.js');
+        const { ResourceManager } = await import('@ng/handles-resource-manager');
         blackboard.resourceManager = await ResourceManager.getInstance();
 
         const { AgentLoader, resourceManager } = blackboard;

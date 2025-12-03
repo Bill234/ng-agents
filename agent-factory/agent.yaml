@@ -1,24 +1,397 @@
 id: agent:agent-factory
 name: AgentFactory
-version: 1
-tags: [generation, meta-agent]
-
-purpose: Build agents from natural language requirements
-
-description: README.md
-
-tools: [Read, WebSearch, AgentDiscovery]
-
+version: 2
+purpose: Build agents from requirements by composing specialized sub-agents
+tags:
+  - factory
+  - composition
+  - orchestrator
+  - meta-agent
+tools: []
 subAgents:
-  - requirements-extractor
-  - tool-analyzer
-  - agent-designer
-  - agent-generator
-  - agent-validator
-  - agent-tester
-  - agent-improver
-
+  - agent:requirements-extractor
+  - agent:tool-analyzer
+  - agent:agent-discoverer
+  - agent:agent-designer
+  - agent:agent-generator
+  - agent:agent-validator
+  - agent:agent-tester
+  - agent:agent-improver
+behaviorTree:
+  type: sequence
+  name: Agent Factory Pipeline
+  children:
+    - type: subagent
+      name: Extract Requirements
+      agentRef: agent:requirements-extractor
+      inputQuery:
+        requirements: "{{input.requirements}}"
+        examples: "{{input.examples}}"
+      outputUpdate:
+        spec: "{{result.spec}}"
+    - type: parallel
+      name: Analyze Tools and Agents
+      children:
+        - type: subagent
+          name: Analyze Tools
+          agentRef: agent:tool-analyzer
+          inputQuery:
+            spec: "{{spec}}"
+          outputUpdate:
+            toolAnalysis: "{{result.toolAnalysis}}"
+            availableTools: "{{result.availableTools}}"
+            selectedTools: "{{result.selectedTools}}"
+        - type: subagent
+          name: Discover Agents
+          agentRef: agent:agent-discoverer
+          inputQuery:
+            spec: "{{spec}}"
+          outputUpdate:
+            agentAnalysis: "{{result.agentAnalysis}}"
+            availableAgents: "{{result.availableAgents}}"
+    - type: subagent
+      name: Design Agent
+      agentRef: agent:agent-designer
+      inputQuery:
+        spec: "{{spec}}"
+        agentAnalysis: "{{agentAnalysis}}"
+        availableAgents: "{{availableAgents}}"
+        availableTools: "{{availableTools}}"
+        createdTools: "{{createdTools}}"
+      outputUpdate:
+        design: "{{result.design}}"
+        generatedAgent: "{{result.generatedAgent}}"
+        pendingSubAgents: "{{result.design.subAgentsToCreate}}"
+    - type: selector
+      name: Build Sub-Agents If Any
+      children:
+        - type: sequence
+          name: Skip If No Sub-Agents
+          children:
+            - type: condition
+              name: No Pending Sub-Agents
+              check: "!pendingSubAgents || pendingSubAgents.length === 0"
+            - type: succeed
+              name: Skip Sub-Agent Building
+        - type: repeat
+          name: Build Sub-Agents Loop
+          maxIterations: 10
+          until: "!pendingSubAgents || pendingSubAgents.length === 0"
+          child:
+            type: sequence
+            name: Build Next Sub-Agent
+            children:
+              - type: prompt
+                name: Pop Next Sub-Agent
+                promptRef: popSubAgent
+                inputQuery:
+                  pending: "{{pendingSubAgents}}"
+                outputUpdate:
+                  currentSubAgentSpec: "{{result.next}}"
+                  pendingSubAgents: "{{result.remaining}}"
+              - type: prompt
+                name: Check Progress
+                promptRef: checkProgress
+                inputQuery:
+                  parentSpec: "{{spec}}"
+                  subAgentSpec: "{{currentSubAgentSpec}}"
+                  pendingCount: "{{pendingSubAgents.length}}"
+                  builtSubAgents: "{{builtSubAgents}}"
+                outputUpdate:
+                  progressOk: "{{result.progressOk}}"
+                  recommendation: "{{result.recommendation}}"
+              - type: selector
+                name: Build Or Simplify
+                children:
+                  - type: sequence
+                    name: Build Sub-Agent Path
+                    children:
+                      - type: condition
+                        name: Progress OK
+                        check: progressOk === true && recommendation === proceed
+                      - type: subagent
+                        name: Build Sub-Agent Recursively
+                        agentRef: agent:agent-factory
+                        inputQuery:
+                          requirements: "{{currentSubAgentSpec.purpose}}"
+                          spec: "{{currentSubAgentSpec}}"
+                        outputUpdate:
+                          builtSubAgent: "{{result.generatedAgent}}"
+                          newPendingSubAgents: "{{result.pendingSubAgents}}"
+                      - type: prompt
+                        name: Merge Results
+                        promptRef: mergeSubAgentResults
+                        inputQuery:
+                          builtSubAgents: "{{builtSubAgents}}"
+                          newSubAgent: "{{builtSubAgent}}"
+                          pendingSubAgents: "{{pendingSubAgents}}"
+                          newPendingSubAgents: "{{newPendingSubAgents}}"
+                        outputUpdate:
+                          builtSubAgents: "{{result.builtSubAgents}}"
+                          pendingSubAgents: "{{result.pendingSubAgents}}"
+                  - type: sequence
+                    name: Simplify To Prompt Path
+                    children:
+                      - type: condition
+                        name: Should Simplify
+                        check: recommendation === use_prompt_instead
+                      - type: prompt
+                        name: Convert To Prompt
+                        promptRef: convertToPrompt
+                        inputQuery:
+                          subAgentSpec: "{{currentSubAgentSpec}}"
+                        outputUpdate:
+                          promptDefinition: "{{result}}"
+    - type: selector
+      name: Generate If Needed
+      children:
+        - type: sequence
+          name: Skip Generation
+          children:
+            - type: condition
+              name: Already Generated
+              check: generatedAgent && generatedAgent.id
+            - type: succeed
+              name: Use Existing
+        - type: subagent
+          name: Generate Agent
+          agentRef: agent:agent-generator
+          inputQuery:
+            design: "{{design}}"
+            spec: "{{spec}}"
+          outputUpdate:
+            generatedAgent: "{{result.generatedAgent}}"
+    - type: repeat
+      name: Validation Loop
+      maxIterations: 3
+      until: isValid === true
+      child:
+        type: sequence
+        name: Validate and Fix
+        children:
+          - type: subagent
+            name: Validate Agent
+            agentRef: agent:agent-validator
+            inputQuery:
+              agentDef: "{{generatedAgent}}"
+              availableTools: "{{availableTools}}"
+            outputUpdate:
+              validation: "{{result.validation}}"
+              isValid: "{{result.isValid}}"
+          - type: selector
+            name: Check Validation
+            children:
+              - type: sequence
+                name: Valid Path
+                children:
+                  - type: condition
+                    name: Is Valid
+                    check: isValid === true
+                  - type: succeed
+                    name: Validation Passed
+              - type: subagent
+                name: Fix Validation Issues
+                agentRef: agent:agent-improver
+                inputQuery:
+                  agentDef: "{{generatedAgent}}"
+                  validationErrors: "{{validation.errors}}"
+                  validationResult: "{{validation}}"
+                  availableTools: "{{availableTools}}"
+                  spec: "{{spec}}"
+                outputUpdate:
+                  generatedAgent: "{{result.fixedAgent}}"
+    - type: repeat
+      name: Test Loop
+      maxIterations: 3
+      until: testPassed === true
+      child:
+        type: sequence
+        name: Test and Improve
+        children:
+          - type: subagent
+            name: Test Agent
+            agentRef: agent:agent-tester
+            inputQuery:
+              agentDef: "{{generatedAgent}}"
+              testInput: "{{input.testInput}}"
+            outputUpdate:
+              testResult: "{{result.testResult}}"
+              testPassed: "{{result.success}}"
+          - type: selector
+            name: Check Test
+            children:
+              - type: sequence
+                name: Test Passed Path
+                children:
+                  - type: condition
+                    name: Test Passed
+                    check: testPassed === true
+                  - type: succeed
+                    name: Test Passed
+              - type: subagent
+                name: Improve Agent
+                agentRef: agent:agent-improver
+                inputQuery:
+                  agentDef: "{{generatedAgent}}"
+                  testResult: "{{testResult}}"
+                  availableTools: "{{availableTools}}"
+                  spec: "{{spec}}"
+                outputUpdate:
+                  generatedAgent: "{{result.fixedAgent}}"
+    - type: succeed
+      name: Return Generated Agent
+      output:
+        generatedAgent: "{{generatedAgent}}"
+        testResult: "{{testResult}}"
+        validation: "{{validation}}"
 prompts:
+  popSubAgent:
+    version: 1
+    systemMessage: You manage a queue of sub-agents to build.
+    template: |-
+      Pop the next sub-agent from the pending queue.
+
+      ## Pending Sub-Agents
+      {{json pending}}
+
+      Return the first item as next and the rest as remaining.
+
+      ```json
+      {
+        "next": { /* first sub-agent spec */ },
+        "remaining": [ /* rest of the array */ ]
+      }
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        next:
+          type: object
+        remaining:
+          type: array
+      required:
+        - next
+        - remaining
+    examples:
+      - input:
+          pending:
+            - id: agent:a
+              purpose: Do A
+            - id: agent:b
+              purpose: Do B
+        output:
+          next:
+            id: agent:a
+            purpose: Do A
+          remaining:
+            - id: agent:b
+              purpose: Do B
   checkProgress:
-    template: "Check if {{task}} is complete..."
-    outputSchema: { type: object, properties: { done: { type: boolean } } }
+    version: 1
+    systemMessage: You are a progress monitor ensuring sub-agent creation is
+      CONVERGING toward executable agents, not SPIRALING into complexity. Your
+      job is to prevent runaway sub-agent creation.
+    template: >-
+      Evaluate if creating this sub-agent represents PROGRESS toward a working
+      solution.
+
+
+      ## Parent Agent Spec
+
+      {{json parentSpec}}
+
+
+      ## Sub-Agent Being Considered
+
+      {{json subAgentSpec}}
+
+
+      ## Pending Sub-Agents Still to Build
+
+      Count: {{pendingCount}}
+
+
+      ## Already Built Sub-Agents
+
+      {{json builtSubAgents}}
+
+
+      ## Progress Criteria
+
+
+      1. **Complexity Check**: Is the sub-agent SIMPLER than its parent?
+         - Fewer capabilities = progress
+         - Same or more capabilities = NOT progress (spiraling)
+
+      2. **Necessity Check**: Does this NEED to be a sub-agent?
+         - Multi-step process requiring its own behavior tree = YES
+         - Single LLM call can handle it = NO (use prompt instead)
+
+      3. **Convergence Check**: Are we approaching leaf agents?
+         - Sub-agent has 1-2 simple capabilities = good (almost leaf)
+         - Sub-agent has many complex capabilities = bad (might spiral)
+
+      4. **Queue Check**: Is the pending count growing or shrinking?
+         - More pending than we started = warning sign
+         - Fewer pending = progress
+
+      ## Decision Rules
+
+      - If sub-agent is clearly simpler and necessary → `progressOk: true,
+      recommendation: proceed`
+
+      - Otherwise (too complex, not necessary, single prompt can handle it) →
+      `progressOk: false, recommendation: use_prompt_instead`
+
+
+      ```json
+
+      {
+        "progressOk": true|false,
+        "recommendation": "proceed" | "use_prompt_instead",
+        "reason": "Why this decision was made",
+        "complexityComparison": "How sub-agent compares to parent"
+      }
+
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        progressOk:
+          type: boolean
+        recommendation:
+          type: string
+          enum:
+            - proceed
+            - use_prompt_instead
+        reason:
+          type: string
+        complexityComparison:
+          type: string
+      required:
+        - progressOk
+        - recommendation
+        - reason
+    examples:
+      - input:
+          parentSpec:
+            name: CodeAnalyzer
+            requiredCapabilities:
+              - read code
+              - parse structure
+              - analyze complexity
+              - generate report
+          subAgentSpec:
+            id: agent:code-parser
+            purpose: Parse code into AST
+            requiredCapabilities:
+              - tokenize
+              - build AST
+          pendingCount: 1
+          builtSubAgents: []
+        output:
+          progressOk: true
+          recommendation: proceed
+          reason: Sub-agent has 2 capabilities vs parents

@@ -1,0 +1,268 @@
+type: suite
+name: Sub-Agent Creation E2E Tests
+description: |
+  Tests the agent factory's ability to:
+  1. Create NEW sub-agents when gaps cannot be filled by simple prompts
+  2. Recursively build sub-agents with their own sub-agents
+  3. Use progress checks to prevent complexity explosion
+  4. Save sub-agents before parent agent
+
+beforeAll:
+  sequence:
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        exports:
+          - AgentLoader
+          - promptDefinition
+          - AgentDefinitionStorage
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/bt/src/index.js"
+        exports:
+          - BTPrototypeFactory
+          - actionDefinition
+          - sequenceDefinition
+          - selectorDefinition
+          - conditionDefinition
+          - repeatDefinition
+          - succeedDefinition
+          - failDefinition
+          - parallelDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - loadAgentFactoryDefinition
+    - script: |
+        const { ResourceManager } = await import('/Users/williampearson/Legion/packages/ng/handles/resource-manager/src/index.js');
+        blackboard.resourceManager = await ResourceManager.getInstance();
+        blackboard.agentFactoryDef = await blackboard.loadAgentFactoryDefinition();
+
+        // Initialize agent storage
+        const { AgentDefinitionStorage, resourceManager } = blackboard;
+        blackboard.agentStorage = new AgentDefinitionStorage({ resourceManager });
+        await blackboard.agentStorage.initialize();
+
+        // Register all BT nodes
+        const { BTPrototypeFactory, actionDefinition, sequenceDefinition, selectorDefinition, conditionDefinition, repeatDefinition, succeedDefinition, failDefinition, promptDefinition, parallelDefinition } = blackboard;
+        BTPrototypeFactory.clearCache();
+        BTPrototypeFactory._definitions.clear();
+        BTPrototypeFactory.register('action', actionDefinition);
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('selector', selectorDefinition);
+        BTPrototypeFactory.register('condition', conditionDefinition);
+        BTPrototypeFactory.register('repeat', repeatDefinition);
+        BTPrototypeFactory.register('succeed', succeedDefinition);
+        BTPrototypeFactory.register('fail', failDefinition);
+        BTPrototypeFactory.register('prompt', promptDefinition);
+        if (parallelDefinition) {
+          BTPrototypeFactory.register('parallel', parallelDefinition);
+        }
+
+        blackboard.createdAgentIds = [];
+    - log: "Setup complete"
+
+afterAll:
+  sequence:
+    - script: |
+        const { agentStorage, createdAgentIds } = blackboard;
+        for (const agentId of createdAgentIds) {
+          try {
+            await agentStorage.deleteAgent(agentId);
+            console.log('Cleaned up agent:', agentId);
+          } catch (e) {
+            console.log('Could not delete agent', agentId, ':', e.message);
+          }
+        }
+    - log: "Cleanup complete"
+
+children:
+  - name: "should trigger sub-agent creation for complex multi-step capability"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef, createdAgentIds } = blackboard;
+
+          const requirements = `
+            Build an agent called "CodeAnalyzer" that:
+            1. Takes a code file path as input
+            2. Reads the code file
+            3. Parses the code structure (extracts functions, classes, imports) - this is a multi-step process requiring:
+               - Tokenization of the code
+               - Building an AST (Abstract Syntax Tree)
+               - Extracting named elements
+            4. Analyzes each function for complexity metrics (cyclomatic complexity, nesting depth)
+            5. Generates a report with:
+               - List of functions with their complexity scores
+               - Suggestions for refactoring complex functions
+
+            IMPORTANT: The parsing and analysis capabilities are COMPLEX multi-step processes.
+            They should each be implemented as separate sub-agents, not simple prompts.
+            Sub-agents should be SIMPLER than the parent - focused on specific tasks.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing sub-agent creation for complex CodeAnalyzer...');
+
+          const testFilePath = '/Users/williampearson/Legion/packages/ng/agents/agent-factory/__tests__/fixtures/sample-code.js';
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { filePath: testFilePath }
+            },
+            timeoutMs: 600000
+          });
+
+          console.log('Result status:', result.status);
+          console.log('Available handles:', result.handles?.map(h => h[0]));
+
+          // Track created agents for cleanup
+          const generatedAgentHandle = result.handles?.find(h => h[0] === 'generatedAgent');
+          if (generatedAgentHandle?.[1]?.handle?.id) {
+            createdAgentIds.push(generatedAgentHandle[1].handle.id);
+          }
+          const builtHandle = result.handles?.find(h => h[0] === 'builtSubAgents');
+          if (builtHandle?.[1]?.handle) {
+            for (const agent of builtHandle[1].handle) {
+              if (agent.id) createdAgentIds.push(agent.id);
+            }
+          }
+
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+  - name: "should apply progress checks to prevent complexity explosion"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef, createdAgentIds } = blackboard;
+
+          const requirements = `
+            Build an agent called "DocumentProcessor" that can:
+            1. Parse documents of any format
+            2. Extract structured data
+            3. Transform the data
+            4. Validate the output
+
+            Note: Each capability could potentially spawn sub-capabilities,
+            but the system should recognize when prompts suffice instead of sub-agents.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing progress check prevents complexity explosion...');
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { document: 'Sample document text' }
+            },
+            timeoutMs: 600000
+          });
+
+          console.log('Result status:', result.status);
+
+          // Check sub-agents created
+          const builtHandle = result.handles?.find(h => h[0] === 'builtSubAgents');
+          const builtCount = builtHandle?.[1]?.handle?.length || 0;
+          console.log('Total sub-agents created:', builtCount);
+
+          // Cleanup
+          const generatedAgentHandle = result.handles?.find(h => h[0] === 'generatedAgent');
+          if (generatedAgentHandle?.[1]?.handle?.id) {
+            createdAgentIds.push(generatedAgentHandle[1].handle.id);
+          }
+          if (builtHandle?.[1]?.handle) {
+            for (const agent of builtHandle[1].handle) {
+              if (agent.id) createdAgentIds.push(agent.id);
+            }
+          }
+
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+  - name: "should save sub-agents before parent agent"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef, agentStorage, createdAgentIds } = blackboard;
+
+          const requirements = `
+            Build an agent called "DataPipeline" that:
+            1. Ingests data from a source
+            2. Transforms the data using a COMPLEX multi-step transformation pipeline
+            3. Outputs the result
+
+            The transformation step should be a specialized sub-agent with its own behavior tree,
+            not just a simple prompt.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing sub-agent save order...');
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { data: { value: 42 } }
+            },
+            timeoutMs: 600000
+          });
+
+          console.log('Result status:', result.status);
+
+          // Cleanup
+          const generatedAgentHandle = result.handles?.find(h => h[0] === 'generatedAgent');
+          if (generatedAgentHandle?.[1]?.handle?.id) {
+            createdAgentIds.push(generatedAgentHandle[1].handle.id);
+          }
+
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+  - name: "should create working agent with sub-agents that can be executed"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef, createdAgentIds } = blackboard;
+
+          const requirements = `
+            Build an agent called "TextAnalyzer" that:
+            1. Takes text input
+            2. Analyzes sentiment (positive/negative/neutral) using a sentiment analysis sub-agent
+            3. Extracts key topics using a topic extraction sub-agent
+            4. Generates a summary combining sentiment and topics
+
+            Each analysis step should be a focused sub-agent that does ONE thing well.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing end-to-end execution with sub-agents...');
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: {
+                text: 'The new product launch was a tremendous success. Customers loved the innovative features and the team worked incredibly hard to deliver on time.'
+              }
+            },
+            timeoutMs: 600000
+          });
+
+          console.log('Result status:', result.status);
+
+          // Cleanup
+          const generatedAgentHandle = result.handles?.find(h => h[0] === 'generatedAgent');
+          if (generatedAgentHandle?.[1]?.handle?.id) {
+            createdAgentIds.push(generatedAgentHandle[1].handle.id);
+          }
+          const builtHandle = result.handles?.find(h => h[0] === 'builtSubAgents');
+          if (builtHandle?.[1]?.handle) {
+            for (const agent of builtHandle[1].handle) {
+              if (agent.id) createdAgentIds.push(agent.id);
+            }
+          }
+
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"

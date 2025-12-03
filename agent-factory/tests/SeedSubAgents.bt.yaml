@@ -6,13 +6,10 @@ beforeAll:
   sequence:
     - getHandle: agentStorage
     - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        from: "@ng/agents-agent-factory"
         exports:
           - seedAgentFactorySubAgents
           - loadAgentFactoryDefinition
-    - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
-        exports:
           - loadAllAgents
     - script: |
         // Get the actual count of agents that will be seeded

@@ -1,0 +1,196 @@
+id: agent:agent-validator
+name: AgentValidator
+version: 1
+purpose: Validates agent definition structure, tools, prompts, and sub-agent references
+tags:
+  - validation
+  - agent
+  - structure
+  - quality
+tools:
+  - AgentValidate
+behaviorTree:
+  type: sequence
+  name: Validate Agent
+  children:
+    - type: action
+      name: Validate Definition
+      description: Run comprehensive validation on agent definition
+      tool: AgentValidate
+      inputQuery:
+        agentDef: "{{input.agentDef}}"
+        availableTools: "{{input.availableTools}}"
+        validatePrompts: "{{input.validatePrompts}}"
+        validateSubAgents: "{{input.validateSubAgents}}"
+      outputUpdate:
+        validation: "{{result}}"
+        isValid: "{{result.valid}}"
+        errors: "{{result.errors}}"
+        warnings: "{{result.warnings}}"
+prompts:
+  reviewAgentDesign:
+    version: 2
+    systemMessage: "You are an expert at reviewing behavior tree designs for AI
+      agents. Your task is to ensure the generated agent is well-designed before
+      testing. CRITICAL: Check that all tools referenced actually exist."
+    template: >-
+      Review the generated agent design.
+
+
+      ## Original Specification
+
+      {{json spec}}
+
+
+      ## Generated Agent
+
+      {{json generatedAgent}}
+
+
+      ## Available Tools (the agent can ONLY use these)
+
+      {{json availableTools}}
+
+
+      ## Review Checklist
+
+      1. **CRITICAL - Tool Verification**: Does every action node's "tool" field
+      match a tool from Available Tools? If ANY tool is not in the list, this is
+      a CRITICAL issue!
+
+      2. Does the behavior tree structure match the spec requirements?
+
+      3. Is data flow through blackboard correct (inputs available before use)?
+
+      4. Are there logic errors or missing edge cases?
+
+      5. Are prompt structures sensible with clear instructions?
+
+      6. Are success criteria measurable and aligned with spec?
+
+      7. Are all required tools/handles declared?
+
+
+      Provide your review in JSON format:
+
+      ```json
+
+      {
+        "readyForTesting": true|false,
+        "issues": [
+          { "severity": "critical|high|medium|low", "location": "path in agent def", "issue": "description", "fix": "suggested fix" }
+        ],
+        "warnings": ["non-blocking warnings"],
+        "suggestions": ["optional improvements"],
+        "invalidTools": ["list of tool names used that are NOT in Available Tools"]
+      }
+
+      ```
+
+
+      IMPORTANT: If ANY action uses a tool NOT in Available Tools, set
+      readyForTesting to false and add a critical issue!
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        readyForTesting:
+          type: boolean
+        issues:
+          type: array
+        warnings:
+          type: array
+          items:
+            type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+      required:
+        - readyForTesting
+        - issues
+    examples:
+      - input:
+          spec:
+            name: FileReader
+            requiredCapabilities:
+              - read files
+          generatedAgent:
+            id: agent:file-reader
+            version: 1
+            name: FileReader
+            behaviorTree:
+              type: sequence
+              children:
+                - type: action
+                  tool: ReadFileTool
+            tools:
+              - ReadFileTool
+        output:
+          readyForTesting: true
+          issues: []
+          warnings: []
+          suggestions:
+            - Consider adding error handling for file not found cases
+  fixAgentIssues:
+    version: 1
+    systemMessage: You are an expert at fixing issues in AI agent definitions. Your
+      task is to apply fixes identified during review.
+    template: |-
+      Fix the issues identified in the agent review.
+
+      ## Current Agent Definition
+      {{json generatedAgent}}
+
+      ## Issues to Fix
+      {{json reviewResult.issues}}
+
+      ## Instructions
+      1. Address all critical and high severity issues
+      2. Address medium issues if straightforward
+      3. Note any issues you couldn't fix in a comment
+      4. Ensure the result is valid agent definition JSON
+
+      Generate the COMPLETE fixed agent definition.
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: "^agent:"
+        version:
+          type: integer
+        name:
+          type: string
+        behaviorTree:
+          type: object
+        prompts:
+          type: object
+      required:
+        - id
+        - name
+        - behaviorTree
+    examples:
+      - input:
+          generatedAgent:
+            id: agent:test
+            name: Test
+            behaviorTree:
+              type: sequence
+              children: []
+          reviewResult:
+            issues:
+              - severity: high
+                issue: Empty behavior tree
+                fix: Add action nodes
+        output:
+          id: agent:test
+          version: 1
+          name: Test
+          behaviorTree:
+            type: sequence
+            children:
+              - type: succeed
+                name: Placeholder
+          prompts: {}

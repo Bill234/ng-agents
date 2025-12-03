@@ -1,0 +1,146 @@
+id: agent:agent-discoverer
+name: AgentDiscoverer
+version: 1
+purpose: Discovers existing agents that could fulfill requirements via composition
+tags:
+  - agents
+  - discovery
+  - composition
+  - analysis
+tools:
+  - AgentDiscovery
+behaviorTree:
+  type: sequence
+  name: Discover Agents
+  children:
+    - type: action
+      name: Discover Available Agents
+      description: Find existing agents that might fulfill required capabilities
+      tool: AgentDiscovery
+      inputQuery:
+        capabilities: "{{input.spec.requiredCapabilities}}"
+        limit: 20
+      outputUpdate:
+        availableAgents: "{{result}}"
+    - type: prompt
+      name: Analyze Agent Coverage
+      description: Determine if existing agents can fulfill requirements via composition
+      promptRef: analyzeAgentCoverage
+      inputQuery:
+        spec: "{{input.spec}}"
+        availableAgents: "{{availableAgents}}"
+        availableTools: "{{input.availableTools}}"
+      outputUpdate:
+        agentAnalysis: "{{result}}"
+prompts:
+  analyzeAgentCoverage:
+    version: 1
+    systemMessage: You are an expert at analyzing agent compositions. Your task is to determine if existing agents can be
+      composed to fulfill new requirements.
+    template: |-
+      Analyze the agent specification and compare against available agents to determine composition strategy.
+
+      ## Agent Specification
+      {{json spec}}
+
+      ## Available Agents
+      {{json availableAgents}}
+
+      ## Available Tools
+      {{json availableTools}}
+
+      ## Analysis Task
+      1. Map each required capability to available agents
+      2. Determine if requirements can be fully met by existing agents
+      3. Identify any gaps that need new implementation
+      4. Suggest composition pattern (pipeline, parallel, conditional, hybrid, none)
+
+      Provide analysis in JSON format:
+      ```json
+      {
+        "capabilityMapping": [
+          { "capability": "description", "matchedAgent": "agent:id or null", "confidence": 0.0-1.0 }
+        ],
+        "compositionStrategy": "pipeline|parallel|conditional|hybrid|none",
+        "composedAgents": ["agent:id1", "agent:id2"],
+        "missingCapabilities": ["capability1", "capability2"],
+        "canComposeEntirely": true|false,
+        "suggestedPattern": {
+          "type": "sequence|parallel|selector",
+          "steps": [
+            { "agent": "agent:id", "role": "description" },
+            { "custom": true, "capability": "description", "role": "description" }
+          ]
+        }
+      }
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        capabilityMapping:
+          type: array
+        compositionStrategy:
+          type: string
+          enum:
+            - pipeline
+            - parallel
+            - conditional
+            - hybrid
+            - none
+        composedAgents:
+          type: array
+          items:
+            type: string
+        missingCapabilities:
+          type: array
+          items:
+            type: string
+        canComposeEntirely:
+          type: boolean
+        suggestedPattern:
+          type: object
+      required:
+        - capabilityMapping
+        - compositionStrategy
+        - composedAgents
+        - missingCapabilities
+        - canComposeEntirely
+    examples:
+      - input:
+          spec:
+            name: FileSummarizer
+            requiredCapabilities:
+              - read files
+              - summarize text
+          availableAgents:
+            - id: agent:file-reader
+              purpose: Reads files and returns content
+              metrics:
+                successRate: 0.96
+            - id: agent:text-summarizer
+              purpose: Summarizes text content
+              metrics:
+                successRate: 0.94
+          availableTools: []
+        output:
+          capabilityMapping:
+            - capability: read files
+              matchedAgent: agent:file-reader
+              confidence: 0.95
+            - capability: summarize text
+              matchedAgent: agent:text-summarizer
+              confidence: 0.92
+          compositionStrategy: pipeline
+          composedAgents:
+            - agent:file-reader
+            - agent:text-summarizer
+          missingCapabilities: []
+          canComposeEntirely: true
+          suggestedPattern:
+            type: sequence
+            steps:
+              - agent: agent:file-reader
+                role: input processing
+              - agent: agent:text-summarizer
+                role: core logic

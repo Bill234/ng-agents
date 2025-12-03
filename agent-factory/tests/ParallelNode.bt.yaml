@@ -1,0 +1,87 @@
+type: suite
+name: Parallel Node
+description: Test the parallel BT node in isolation
+
+beforeAll:
+  sequence:
+    - import:
+        from: "@ng/agents-bt"
+        exports:
+          - BTPrototypeFactory
+          - BTExecutor
+          - parallelDefinition
+          - sequenceDefinition
+          - succeedDefinition
+          - failDefinition
+    - getHandle: resourceManager
+      as: rm
+    - script: |
+        const { BTPrototypeFactory, BTExecutor, parallelDefinition, sequenceDefinition, succeedDefinition, failDefinition, rm } = blackboard;
+
+        // Register needed node types
+        BTPrototypeFactory.clearCache();
+        BTPrototypeFactory._definitions.clear();
+        BTPrototypeFactory.register('parallel', parallelDefinition);
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('succeed', succeedDefinition);
+        BTPrototypeFactory.register('fail', failDefinition);
+
+        blackboard.executor = new BTExecutor(rm);
+    - log: "BTExecutor initialized with parallel node definitions"
+
+children:
+  - name: "parallel node executes children concurrently"
+    sequence:
+      - script: |
+          const tree = {
+            type: 'parallel',
+            name: 'Test Parallel',
+            children: [
+              { type: 'succeed', name: 'Child 1' },
+              { type: 'succeed', name: 'Child 2' }
+            ]
+          };
+          blackboard.result = await blackboard.executor.executeTree(tree, { timeoutMs: 5000 });
+
+      - assert: "{{result}}.status === 'SUCCESS'"
+        message: "should succeed when all children succeed"
+
+      - assert: "{{result}}.result.successCount === 2"
+        message: "should report 2 successful children"
+
+  - name: "parallel node fails if not enough children succeed"
+    sequence:
+      - script: |
+          const tree = {
+            type: 'parallel',
+            name: 'Test Parallel',
+            successThreshold: 2,
+            children: [
+              { type: 'succeed', name: 'Child 1' },
+              { type: 'fail', name: 'Child 2' }
+            ]
+          };
+          blackboard.result = await blackboard.executor.executeTree(tree, { timeoutMs: 5000 });
+
+      - assert: "{{result}}.status === 'FAILED'"
+        message: "should fail when threshold not met"
+
+  - name: "parallel node succeeds with threshold"
+    sequence:
+      - script: |
+          const tree = {
+            type: 'parallel',
+            name: 'Test Parallel',
+            successThreshold: 1,
+            children: [
+              { type: 'succeed', name: 'Child 1' },
+              { type: 'fail', name: 'Child 2' }
+            ]
+          };
+          blackboard.result = await blackboard.executor.executeTree(tree, { timeoutMs: 5000 });
+
+      - assert: "{{result}}.status === 'SUCCESS'"
+        message: "should succeed when threshold is met"
+
+      - assert: "{{result}}.result.successCount === 1"
+        message: "should report 1 successful child"

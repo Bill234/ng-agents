@@ -1,0 +1,661 @@
+id: agent:agent-designer
+name: AgentDesigner
+version: 1
+purpose: Designs agent behavior trees based on requirements, selecting
+  composition or scratch-build strategy
+tags:
+  - design
+  - behavior-tree
+  - composition
+  - architecture
+tools: []
+behaviorTree:
+  type: selector
+  name: Design Strategy Selector
+  children:
+    - type: sequence
+      name: Full Composition Path
+      children:
+        - type: condition
+          name: Can Compose Entirely
+          expression: input.agentAnalysis.canComposeEntirely === true
+        - type: prompt
+          name: Compose Agents
+          promptRef: composeAgents
+          inputQuery:
+            spec: "{{input.spec}}"
+            agentAnalysis: "{{input.agentAnalysis}}"
+            availableAgents: "{{input.availableAgents}}"
+          outputUpdate:
+            design: "{{result}}"
+            generatedAgent: "{{result}}"
+    - type: sequence
+      name: Hybrid Composition Path
+      children:
+        - type: condition
+          name: Has Composed Agents
+          expression: input.agentAnalysis.composedAgents &&
+            input.agentAnalysis.composedAgents.length > 0
+        - type: prompt
+          name: Design With Composition
+          promptRef: designWithComposition
+          inputQuery:
+            spec: "{{input.spec}}"
+            agentAnalysis: "{{input.agentAnalysis}}"
+            availableAgents: "{{input.availableAgents}}"
+            availableTools: "{{input.availableTools}}"
+            createdTools: "{{input.createdTools}}"
+          outputUpdate:
+            design: "{{result}}"
+    - type: prompt
+      name: Design From Scratch
+      promptRef: designAgent
+      inputQuery:
+        spec: "{{input.spec}}"
+        availableTools: "{{input.availableTools}}"
+        createdTools: "{{input.createdTools}}"
+      outputUpdate:
+        design: "{{result}}"
+prompts:
+  designAgent:
+    version: 3
+    systemMessage: You are an expert behavior tree designer. Design SIMPLE, MINIMAL
+      behavior trees. NEVER create sub-agents - use prompt nodes for LLM-based
+      capabilities.
+    template: >-
+      Design a behavior tree for an agent with the following specification.
+
+
+      ## Specification
+
+      {{json spec}}
+
+
+      ## AVAILABLE TOOLS - YOU MAY ONLY USE THESE
+
+      {{json availableTools}}
+
+
+      ## Newly Created Tools
+
+      {{json createdTools}}
+
+
+      ## CRITICAL RULES
+
+      1. **SIMPLICITY FIRST**: Use the MINIMUM number of nodes needed
+
+      2. **NO SUB-AGENTS**: This prompt does NOT create sub-agents. Use prompt
+      nodes for any LLM-based logic.
+
+      3. **For simple tasks (calculations, text manipulation, Q&A)**: Use a
+      SINGLE prompt node
+
+      4. **Only use action nodes** for tools that are EXPLICITLY listed above
+
+
+      ## Node Types
+
+      - sequence: Execute children in order
+
+      - selector: Execute children until one succeeds  
+
+      - condition: Evaluate expression
+
+      - action: Execute a tool (ONLY from available tools!)
+
+      - prompt: LLM reasoning - USE THIS for any capability not covered by tools
+
+      - repeat: Loop child
+
+
+      ## Examples of Simple Designs
+
+
+      **Calculator** (add numbers): Single prompt node
+
+      **Text formatter**: Single prompt node  
+
+      **File reader with tool**: Single action node
+
+
+      Provide JSON:
+
+      ```json
+
+      {
+        "behaviorTree": {...},
+        "prompts": { "name": { "template": "...", "outputSchema": {...}, "examples": [...] } },
+        "dataFlow": { "description": "...", "blackboardKeys": [...] },
+        "toolsUsed": []
+      }
+
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        behaviorTree:
+          type: object
+        prompts:
+          type: object
+        dataFlow:
+          type: object
+        toolsUsed:
+          type: array
+      required:
+        - behaviorTree
+    examples:
+      - input:
+          spec:
+            name: AddCalculator
+            purpose: Add two numbers
+            requiredCapabilities:
+              - arithmetic
+          availableTools: []
+        output:
+          behaviorTree:
+            type: prompt
+            name: Calculate Sum
+            promptRef: addNumbers
+            inputQuery:
+              a: "{{input.a}}"
+              b: "{{input.b}}"
+            outputUpdate:
+              sum: "{{result.sum}}"
+          prompts:
+            addNumbers:
+              template: "Add these two numbers: {{a}} + {{b}}. Return the sum."
+              outputSchema:
+                type: object
+                properties:
+                  sum:
+                    type: number
+                required:
+                  - sum
+              examples:
+                - input:
+                    a: 5
+                    b: 3
+                  output:
+                    sum: 8
+          toolsUsed: []
+      - input:
+          spec:
+            name: MessageClassifier
+            purpose: Classify messages into categories
+            requiredCapabilities:
+              - text classification
+          availableTools: []
+        output:
+          behaviorTree:
+            type: prompt
+            name: Classify Message
+            promptRef: classifyMessage
+            inputQuery:
+              message: "{{input.message}}"
+            outputUpdate:
+              classification: "{{result.classification}}"
+              confidence: "{{result.confidence}}"
+          prompts:
+            classifyMessage:
+              template: "Classify the following message into one of: question, task, or
+                feedback.\\n\\nMessage: {{message}}\\n\\nReturn the
+                classification and confidence score (0-1)."
+              outputSchema:
+                type: object
+                properties:
+                  classification:
+                    type: string
+                    enum:
+                      - question
+                      - task
+                      - feedback
+                  confidence:
+                    type: number
+                required:
+                  - classification
+                  - confidence
+              examples:
+                - input:
+                    message: How do I reset my password?
+                  output:
+                    classification: question
+                    confidence: 0.95
+          toolsUsed: []
+      - input:
+          spec:
+            name: FileReader
+            requiredCapabilities:
+              - read files
+          availableTools:
+            - name: ReadFileTool
+        output:
+          behaviorTree:
+            type: action
+            name: Read File
+            tool: ReadFileTool
+            inputQuery:
+              path: "{{input.filePath}}"
+            outputUpdate:
+              content: "{{result}}"
+          prompts: {}
+          toolsUsed:
+            - ReadFileTool
+  designWithComposition:
+    version: 5
+    systemMessage: You are an expert behavior tree designer. PREFER SIMPLICITY. Use
+      prompt nodes for simple tasks. Only create sub-agents when genuinely
+      necessary for complex multi-step workflows.
+    template: >-
+      Design a hybrid agent composing existing agents AND custom components.
+
+
+      ## Specification
+
+      {{json spec}}
+
+
+      ## Agent Analysis
+
+      {{json agentAnalysis}}
+
+
+      ## Available Agents (with inputs/outputs)
+
+      {{json availableAgents}}
+
+
+      ## Available Tools
+
+      {{json availableTools}}
+
+
+      ## CRITICAL: SIMPLICITY FIRST
+
+
+      **NEVER create sub-agents for:**
+
+      - Arithmetic/calculations (use prompt node)
+
+      - Text formatting/manipulation (use prompt node)
+
+      - Simple Q&A (use prompt node)
+
+      - Single-step transformations (use prompt node)
+
+
+      **ONLY create sub-agents for:**
+
+      - Multi-file operations requiring coordination
+
+      - Processes with retry/recovery logic
+
+      - Pipelines with 4+ sequential steps
+
+      - Tasks requiring their own state management
+
+
+      ## Node Types
+
+
+      ### Prompt Node (USE THIS for simple logic)
+
+      ```json
+
+      { "type": "prompt", "name": "Descriptive Name", "promptRef": "promptName",
+      "inputQuery": {...}, "outputUpdate": {...} }
+
+      ```
+
+
+      ### Action Node (for tools)
+
+      ```json
+
+      { "type": "action", "name": "Descriptive Name", "tool": "ToolName",
+      "inputQuery": {...}, "outputUpdate": {...} }
+
+      ```
+
+
+      ### Subagent Node (for EXISTING agents only, or genuinely complex new
+      agents)
+
+      ```json
+
+      { "type": "subagent", "name": "Descriptive Name", "agentRef": "agent:id",
+      "inputQuery": {...}, "outputUpdate": {...} }
+
+      ```
+
+
+      ## Strategy
+
+      1. Use subagent nodes ONLY for matched existing agents
+
+      2. Use action nodes for available tools
+
+      3. Use prompt nodes for ALL simple capabilities (arithmetic, text, Q&A)
+
+      4. ONLY create new sub-agents if task has 4+ complex steps
+
+      5. Default to prompt nodes - subAgentsToCreate should usually be EMPTY
+
+
+      Provide JSON:
+
+      ```json
+
+      {
+        "behaviorTree": {...},
+        "prompts": { "promptName": { "template": "...", "outputSchema": {...}, "examples": [...] } },
+        "subAgentsUsed": [],
+        "toolsUsed": [],
+        "subAgentsToCreate": []
+      }
+
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        behaviorTree:
+          type: object
+        prompts:
+          type: object
+        subAgentsUsed:
+          type: array
+        toolsUsed:
+          type: array
+        subAgentsToCreate:
+          type: array
+      required:
+        - behaviorTree
+        - subAgentsUsed
+        - toolsUsed
+    examples:
+      - input:
+          spec:
+            name: AddCalculator
+            purpose: Add two numbers
+            requiredCapabilities:
+              - arithmetic
+          agentAnalysis:
+            composedAgents: []
+            missingCapabilities:
+              - arithmetic
+          availableAgents:
+            agents: []
+          availableTools: []
+        output:
+          behaviorTree:
+            type: prompt
+            name: Calculate Sum
+            promptRef: addNumbers
+            inputQuery:
+              a: "{{input.a}}"
+              b: "{{input.b}}"
+            outputUpdate:
+              sum: "{{result.sum}}"
+          prompts:
+            addNumbers:
+              template: "Add: {{a}} + {{b}}. Return the sum."
+              outputSchema:
+                type: object
+                properties:
+                  sum:
+                    type: number
+                required:
+                  - sum
+              examples:
+                - input:
+                    a: 5
+                    b: 3
+                  output:
+                    sum: 8
+          subAgentsUsed: []
+          toolsUsed: []
+          subAgentsToCreate: []
+      - input:
+          spec:
+            name: TextClassifier
+            purpose: Classify text into categories
+            requiredCapabilities:
+              - text classification
+          agentAnalysis:
+            composedAgents: []
+            missingCapabilities:
+              - text classification
+          availableAgents:
+            agents: []
+          availableTools: []
+        output:
+          behaviorTree:
+            type: prompt
+            name: Classify Text
+            promptRef: classifyText
+            inputQuery:
+              text: "{{input.text}}"
+              categories: "{{input.categories}}"
+            outputUpdate:
+              category: "{{result.category}}"
+              confidence: "{{result.confidence}}"
+          prompts:
+            classifyText:
+              template: "Classify the following text into one of these categories:
+                {{categories}}.\\n\\nText: {{text}}\\n\\nReturn the category and
+                confidence score."
+              outputSchema:
+                type: object
+                properties:
+                  category:
+                    type: string
+                  confidence:
+                    type: number
+                required:
+                  - category
+                  - confidence
+              examples:
+                - input:
+                    text: How do I...
+                    categories:
+                      - question
+                      - statement
+                  output:
+                    category: question
+                    confidence: 0.95
+          subAgentsUsed: []
+          toolsUsed: []
+          subAgentsToCreate: []
+      - input:
+          spec:
+            name: DataPipeline
+            requiredCapabilities:
+              - read file
+              - summarize
+          agentAnalysis:
+            composedAgents:
+              - agent:file-reader
+            missingCapabilities:
+              - summarize
+          availableAgents:
+            agents:
+              - id: agent:file-reader
+                inputs:
+                  - name: filePath
+                outputs:
+                  - name: content
+          availableTools: []
+        output:
+          behaviorTree:
+            type: sequence
+            children:
+              - type: subagent
+                name: Read File
+                agentRef: agent:file-reader
+                inputQuery:
+                  filePath: "{{input.filePath}}"
+                outputUpdate:
+                  fileContent: "{{result.content}}"
+              - type: prompt
+                name: Summarize Content
+                promptRef: summarize
+                inputQuery:
+                  text: "{{fileContent}}"
+                outputUpdate:
+                  summary: "{{result.summary}}"
+          prompts:
+            summarize:
+              template: Summarize the following text:\n\n{{text}}
+              outputSchema:
+                type: object
+                properties:
+                  summary:
+                    type: string
+                required:
+                  - summary
+              examples:
+                - input:
+                    text: Long text...
+                  output:
+                    summary: Brief summary
+          subAgentsUsed:
+            - agent:file-reader
+          toolsUsed: []
+          subAgentsToCreate: []
+  composeAgents:
+    version: 2
+    systemMessage: "You are an expert at composing existing agents. Generate a
+      complete agent definition using ONLY subagent nodes. CRITICAL: You must
+      include inputQuery and outputUpdate on EVERY subagent node to wire data
+      flow between agents."
+    template: >-
+      Generate an agent by composing existing agents.
+
+
+      ## Specification
+
+      {{json spec}}
+
+
+      ## Agent Analysis
+
+      {{json agentAnalysis}}
+
+
+      ## Available Agents (with their inputs/outputs)
+
+      {{json availableAgents}}
+
+
+      ## CRITICAL Requirements
+
+      1. ONLY use subagent nodes - no action or prompt nodes
+
+      2. EVERY subagent node MUST have:
+         - inputQuery: maps data FROM the blackboard TO the subagent's expected input names
+         - outputUpdate: maps data FROM the subagent's output TO the blackboard
+      3. Data flow must chain: first agent's outputUpdate keys become next
+      agent's inputQuery sources
+
+      4. Use {{input.X}} for initial input, {{previousKey}} for chained data
+
+
+      ## Subagent Node Structure
+
+      ```json
+
+      {
+        "type": "subagent",
+        "agentRef": "agent:the-agent-id",
+        "inputQuery": { "agentInputName": "{{blackboardKey}}" },
+        "outputUpdate": { "newBlackboardKey": "{{result.agentOutputName}}" }
+      }
+
+      ```
+
+
+      Generate complete agent JSON:
+
+      ```json
+
+      {
+        "id": "agent:...",
+        "version": 1,
+        "name": "...",
+        "purpose": "...",
+        "behaviorTree": {...},
+        "prompts": {},
+        "subAgents": []
+      }
+
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+        name:
+          type: string
+        behaviorTree:
+          type: object
+        subAgents:
+          type: array
+      required:
+        - id
+        - version
+        - name
+        - behaviorTree
+        - subAgents
+    examples:
+      - input:
+          spec:
+            name: ReadAndSummarize
+            purpose: Read a file and summarize it
+          agentAnalysis:
+            canComposeEntirely: true
+            composedAgents:
+              - agent:file-reader
+              - agent:text-summarizer
+            suggestedPattern:
+              type: sequence
+          availableAgents:
+            agents:
+              - id: agent:file-reader
+                inputs:
+                  - name: filePath
+                outputs:
+                  - name: content
+              - id: agent:text-summarizer
+                inputs:
+                  - name: text
+                outputs:
+                  - name: summary
+        output:
+          id: agent:read-and-summarize
+          version: 1
+          name: ReadAndSummarize
+          purpose: Read a file and summarize it
+          behaviorTree:
+            type: sequence
+            children:
+              - type: subagent
+                agentRef: agent:file-reader
+                inputQuery:
+                  filePath: "{{input.filePath}}"
+                outputUpdate:
+                  fileContent: "{{result.content}}"
+              - type: subagent
+                agentRef: agent:text-summarizer
+                inputQuery:
+                  text: "{{fileContent}}"
+                outputUpdate:
+                  summary: "{{result.summary}}"
+          prompts: {}
+          subAgents:
+            - agent:file-reader
+            - agent:text-summarizer

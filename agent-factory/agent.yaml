@@ -289,12 +289,10 @@ prompts:
               purpose: Do B
   checkProgress:
     version: 1
-    systemMessage: You are a progress monitor ensuring sub-agent creation is
-      CONVERGING toward executable agents, not SPIRALING into complexity. Your
-      job is to prevent runaway sub-agent creation.
+    systemMessage: You are a progress monitor ensuring sub-agent creation is CONVERGING toward executable agents, not
+      SPIRALING into complexity. Your job is to prevent runaway sub-agent creation.
     template: >-
-      Evaluate if creating this sub-agent represents PROGRESS toward a working
-      solution.
+      Evaluate if creating this sub-agent represents PROGRESS toward a working solution.
 
 
       ## Parent Agent Spec
@@ -338,11 +336,10 @@ prompts:
 
       ## Decision Rules
 
-      - If sub-agent is clearly simpler and necessary → `progressOk: true,
-      recommendation: 'proceed'`
+      - If sub-agent is clearly simpler and necessary → `progressOk: true, recommendation: 'proceed'`
 
-      - Otherwise (too complex, not necessary, single prompt can handle it) →
-      `progressOk: false, recommendation: 'use_prompt_instead'`
+      - Otherwise (too complex, not necessary, single prompt can handle it) → `progressOk: false, recommendation:
+      'use_prompt_instead'`
 
 
       ```json
@@ -394,8 +391,7 @@ prompts:
         output:
           progressOk: true
           recommendation: proceed
-          reason: Sub-agent has 2 capabilities vs parent's 4, clearly simpler and focused
-            on parsing only
+          reason: Sub-agent has 2 capabilities vs parent's 4, clearly simpler and focused on parsing only
           complexityComparison: 2 capabilities vs 4 - simpler
       - input:
           parentSpec:
@@ -412,52 +408,35 @@ prompts:
         output:
           progressOk: false
           recommendation: use_prompt_instead
-          reason: Sub-agent has same capability as parent - a single prompt can handle
-            text formatting
+          reason: Sub-agent has same capability as parent - a single prompt can handle text formatting
           complexityComparison: 1 capability vs 1 - no simplification
   mergeSubAgentResults:
     version: 1
     systemMessage: You merge sub-agent building results.
-    template: >-
-      Merge the newly built sub-agent and any new pending sub-agents into the
-      tracking lists.
-
+    template: |-
+      Merge the newly built sub-agent and any new pending sub-agents into the tracking lists.
 
       ## Currently Built Sub-Agents
-
       {{json builtSubAgents}}
 
-
       ## Newly Built Sub-Agent
-
       {{json newSubAgent}}
 
-
       ## Current Pending Sub-Agents
-
       {{json pendingSubAgents}}
 
-
       ## New Pending Sub-Agents (from recursive build)
-
       {{json newPendingSubAgents}}
 
-
       Merge these lists:
-
       - Add newSubAgent to builtSubAgents
-
-      - Combine pendingSubAgents with newPendingSubAgents (avoiding duplicates
-      by id)
-
+      - Combine pendingSubAgents with newPendingSubAgents (avoiding duplicates by id)
 
       ```json
-
       {
         "builtSubAgents": [ /* all built agents including new one */ ],
         "pendingSubAgents": [ /* combined pending list */ ]
       }
-
       ```
     outputFormat: json
     outputSchema:
@@ -489,31 +468,22 @@ prompts:
             - id: agent:d
   convertToPrompt:
     version: 1
-    systemMessage: You convert a sub-agent specification into a simple prompt
-      definition when the sub-agent is unnecessary.
-    template: >-
-      Convert this sub-agent spec into a prompt definition that can handle the
-      same capability with a single LLM call.
-
+    systemMessage: You convert a sub-agent specification into a simple prompt definition when the sub-agent is unnecessary.
+    template: |-
+      Convert this sub-agent spec into a prompt definition that can handle the same capability with a single LLM call.
 
       ## Sub-Agent Spec
-
       {{json subAgentSpec}}
 
-
-      Create a prompt that achieves the same purpose without needing a full
-      agent.
-
+      Create a prompt that achieves the same purpose without needing a full agent.
 
       ```json
-
       {
         "promptName": "camelCaseName",
         "template": "The prompt template with {{variables}}",
         "outputSchema": { "type": "object", "properties": {...} },
         "examples": [{ "input": {...}, "output": {...} }]
       }
-
       ```
     outputFormat: json
     outputSchema:

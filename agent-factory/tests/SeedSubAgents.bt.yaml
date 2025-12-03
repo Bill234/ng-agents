@@ -1,0 +1,98 @@
+type: suite
+name: Seed Sub-Agents
+description: Test seeding Agent Factory sub-agents into storage
+
+beforeAll:
+  sequence:
+    - getHandle: agentStorage
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - seedAgentFactorySubAgents
+          - loadAgentFactoryDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - loadAllAgents
+    - script: |
+        // Get the actual count of agents that will be seeded
+        const allAgents = await blackboard.loadAllAgents();
+        blackboard.expectedAgentCount = allAgents.length;
+    - log: "Setup complete, expecting {{expectedAgentCount}} agents"
+
+afterAll:
+  sequence:
+    - script: |
+        // Clean up seeded agents
+        if (blackboard.seededIds) {
+          for (const id of blackboard.seededIds) {
+            try {
+              await blackboard.agentStorage.deleteAgent(id);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
+          }
+        }
+    - log: "Cleanup complete"
+
+children:
+  - name: "seedAgentFactorySubAgents saves all sub-agents to storage"
+    sequence:
+      - script: |
+          const { seedAgentFactorySubAgents, agentStorage } = blackboard;
+          blackboard.seededIds = await seedAgentFactorySubAgents(agentStorage);
+          console.log('Seeded agents:', blackboard.seededIds);
+
+      - assert: "{{seededIds}}.length === {{expectedAgentCount}}"
+        message: "should seed expected number of agents"
+
+      - script: |
+          // Verify each agent can be retrieved
+          const { agentStorage, seededIds } = blackboard;
+          for (const id of seededIds) {
+            const agent = await agentStorage.getLatestAgent(id);
+            if (!agent) throw new Error(`Agent ${id} not found after seeding`);
+            if (agent.id !== id) throw new Error(`Agent ID mismatch: ${agent.id} !== ${id}`);
+            if (!agent.behaviorTree) throw new Error(`Agent ${id} has no behaviorTree`);
+          }
+          blackboard.verificationPassed = true;
+
+      - assert: "{{verificationPassed}} === true"
+        message: "all agents should be retrievable and valid"
+
+  - name: "requirements-extractor is seeded correctly"
+    sequence:
+      - call: agentStorage.getLatestAgent "agent:requirements-extractor"
+        as: agent
+
+      - assert: "{{agent}} !== null && {{agent}} !== undefined"
+        message: "agent should exist"
+
+      - assert: "{{agent}}.name === 'RequirementsExtractor'"
+        message: "should have correct name"
+
+      - assert: "{{agent}}.prompts.extractRequirements !== undefined"
+        message: "should have extractRequirements prompt"
+
+  - name: "agent-factory orchestrator is seeded correctly"
+    sequence:
+      - call: agentStorage.getLatestAgent "agent:agent-factory"
+        as: agent
+
+      - assert: "{{agent}} !== null && {{agent}} !== undefined"
+        message: "agent should exist"
+
+      - assert: "{{agent}}.name === 'AgentFactory'"
+        message: "should have correct name"
+
+      - assert: "{{agent}}.subAgents.length === 8"
+        message: "should have 8 sub-agents"
+
+      - script: |
+          blackboard.btStr = JSON.stringify(blackboard.agent.behaviorTree);
+
+      - assert: "{{btStr}}.includes('\"type\":\"parallel\"')"
+        message: "should have parallel node in BT"
+
+      - assert: "{{btStr}}.includes('\"type\":\"subagent\"')"
+        message: "should have subagent nodes in BT"

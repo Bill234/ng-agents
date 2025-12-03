@@ -1,0 +1,248 @@
+id: agent:agent-planner
+name: AgentPlanner
+version: 1
+purpose: Plans agent behavior using simple step format, then compiles to behavior tree
+tags:
+  - planning
+  - behavior-tree
+  - compilation
+tools:
+  - PlanCompile
+behaviorTree:
+  type: sequence
+  name: Plan and Compile Agent
+  children:
+    - type: prompt
+      name: Create Simple Plan
+      promptRef: createPlan
+      inputQuery:
+        spec: "{{input.spec}}"
+        availableTools: "{{input.availableTools}}"
+        availableAgents: "{{input.availableAgents}}"
+      outputUpdate:
+        plan: "{{result.plan}}"
+    - type: action
+      name: Compile Plan to Behavior Tree
+      tool: PlanCompile
+      inputQuery:
+        plan: "{{plan}}"
+        spec: "{{input.spec}}"
+      outputUpdate:
+        behaviorTree: "{{result.behaviorTree}}"
+        prompts: "{{result.prompts}}"
+        toolsUsed: "{{result.tools}}"
+prompts:
+  createPlan:
+    version: 1
+    systemMessage: You are an expert at planning agent workflows. Create simple
+      step-by-step plans that will be compiled into behavior trees. Focus on the
+      LOGICAL FLOW, not the implementation details.
+    template: |-
+      Create a simple plan for an agent with this specification.
+
+      ## Specification
+      Name: {{spec.name}}
+      Purpose: {{spec.purpose}}
+      Inputs: {{json spec.inputs}}
+      Outputs: {{json spec.outputs}}
+      Required Capabilities: {{json spec.requiredCapabilities}}
+
+      ## Available Tools
+      {{json availableTools}}
+
+      ## Available Agents (can be composed)
+      {{json availableAgents}}
+
+      ## Plan Format
+
+      Output your plan in this EXACT format:
+
+      ```
+      AGENT: <name from spec>
+      PURPOSE: <purpose from spec>
+
+      STEPS:
+      1. <what this step does>
+         INPUT: <varName> (from user input), <otherVar> (from step N)
+         OUTPUT: <resultVar> (type: string|number|object|array)
+
+      2. <next step...>
+         INPUT: ...
+         OUTPUT: ...
+
+      FINAL OUTPUT: <which variable(s) to return>
+      ```
+
+      ## Special Step Types
+
+      **For using existing tools:**
+      ```
+      N. USE TOOL <ToolName>
+         INPUT: ...
+         OUTPUT: ...
+      ```
+
+      **For using existing agents:**
+      ```
+      N. USE AGENT agent:<agent-id>
+         INPUT: ...
+         OUTPUT: ...
+      ```
+
+      **For conditionals:**
+      ```
+      N. IF <condition> THEN:
+         <what to do if true>
+         INPUT: ...
+         OUTPUT: ...
+         ELSE:
+         <what to do if false>
+         INPUT: ...
+         OUTPUT: ...
+      ```
+
+      ## Rules
+
+      1. SIMPLE agents (classification, calculation, Q&A) need only 1-2 steps
+      2. Each step should do ONE thing
+      3. Use INPUT to declare where data comes from
+      4. Use OUTPUT to declare what the step produces
+      5. FINAL OUTPUT must match the spec's expected outputs
+      6. Only USE TOOL or USE AGENT if they're available above
+
+      Now create the plan:
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        plan:
+          type: string
+          description: The plan text in the specified format
+      required:
+        - plan
+    examples:
+      - input:
+          spec:
+            name: MessageClassifier
+            purpose: Classifies messages into categories
+            inputs:
+              - name: message
+                type: string
+            outputs:
+              - name: classification
+                type: string
+              - name: confidence
+                type: number
+            requiredCapabilities:
+              - text classification
+          availableTools: []
+          availableAgents: []
+        output:
+          plan: |-
+            AGENT: MessageClassifier
+            PURPOSE: Classifies messages into categories
+
+            STEPS:
+            1. Classify the message into question, task, or feedback
+               INPUT: message (from user input)
+               OUTPUT: classification (type: string), confidence (type: number)
+
+            FINAL OUTPUT: classification, confidence
+      - input:
+          spec:
+            name: Calculator
+            purpose: Adds two numbers
+            inputs:
+              - name: a
+                type: number
+              - name: b
+                type: number
+            outputs:
+              - name: sum
+                type: number
+            requiredCapabilities:
+              - arithmetic
+          availableTools: []
+          availableAgents: []
+        output:
+          plan: |-
+            AGENT: Calculator
+            PURPOSE: Adds two numbers
+
+            STEPS:
+            1. Add the two numbers together
+               INPUT: a (from user input), b (from user input)
+               OUTPUT: sum (type: number)
+
+            FINAL OUTPUT: sum
+      - input:
+          spec:
+            name: TaskRouter
+            purpose: Routes tasks based on type
+            inputs:
+              - name: task
+                type: string
+            outputs:
+              - name: result
+                type: object
+            requiredCapabilities:
+              - classification
+              - routing
+          availableTools: []
+          availableAgents: []
+        output:
+          plan: |-
+            AGENT: TaskRouter
+            PURPOSE: Routes tasks based on type
+
+            STEPS:
+            1. Classify the task type
+               INPUT: task (from user input)
+               OUTPUT: taskType (type: string), confidence (type: number)
+
+            2. IF taskType is "question" THEN:
+               Answer the question
+               INPUT: task (from user input)
+               OUTPUT: answer (type: string)
+               ELSE:
+               Execute the action
+               INPUT: task (from user input)
+               OUTPUT: actionResult (type: object)
+
+            3. Combine the results
+               INPUT: answer (from step 2), actionResult (from step 2)
+               OUTPUT: result (type: object)
+
+            FINAL OUTPUT: result
+      - input:
+          spec:
+            name: FileSummarizer
+            purpose: Reads a file and summarizes it
+            inputs:
+              - name: filePath
+                type: string
+            outputs:
+              - name: summary
+                type: string
+            requiredCapabilities:
+              - read files
+              - summarization
+          availableTools:
+            - name: ReadFileTool
+              description: Reads file content
+          availableAgents: []
+        output:
+          plan: |-
+            AGENT: FileSummarizer
+            PURPOSE: Reads a file and summarizes it
+
+            STEPS:
+            1. USE TOOL ReadFileTool
+               INPUT: filePath (from user input)
+               OUTPUT: content (type: string)
+
+            2. Summarize the file content
+               INPUT: content (from step 1)
+               OUTPUT: summary (type: string)
+
+            FINAL OUTPUT: summary

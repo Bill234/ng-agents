@@ -1,0 +1,209 @@
+type: suite
+name: Agent Factory E2E Tests
+description: |
+  Tests the Agent Factory orchestrator which composes sub-agents to:
+  1. Extract requirements from natural language
+  2. Analyze tools and discover existing agents
+  3. Design and generate agent definitions
+  4. Validate and test agents
+
+beforeAll:
+  sequence:
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        exports:
+          - AgentLoader
+          - loadAgentByName
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - AGENTS_DIR
+    - script: |
+        const { loadAgentByName, AGENTS_DIR } = blackboard;
+        blackboard.orchestrator = await loadAgentByName(AGENTS_DIR, 'agent-factory');
+        blackboard.reqExtractor = await loadAgentByName(AGENTS_DIR, 'requirements-extractor');
+        blackboard.agentDesigner = await loadAgentByName(AGENTS_DIR, 'agent-designer');
+        blackboard.agentGenerator = await loadAgentByName(AGENTS_DIR, 'agent-generator');
+    - log: "Loaded agent definitions"
+
+children:
+  # Orchestrator Definition Validation
+  - name: "orchestrator should be valid JSON with required fields"
+    sequence:
+      - assert: "{{orchestrator}} !== undefined"
+        message: "orchestrator should be defined"
+      - assert: "{{orchestrator}}.id === 'agent:agent-factory'"
+        message: "should have correct id"
+      - assert: "{{orchestrator}}.name === 'AgentFactory'"
+        message: "should have correct name"
+      - assert: "{{orchestrator}}.behaviorTree !== undefined"
+        message: "should have behaviorTree"
+
+  - name: "orchestrator should have correct ID format"
+    sequence:
+      - assert: "{{orchestrator}}.id.startsWith('agent:')"
+        message: "id should start with 'agent:'"
+
+  - name: "orchestrator should have helper prompts only"
+    sequence:
+      - script: |
+          blackboard.promptCount = Object.keys(blackboard.orchestrator.prompts).length;
+      - assert: "{{promptCount}} === 4"
+        message: "should have 4 helper prompts"
+
+  - name: "orchestrator should have correct behavior tree structure"
+    sequence:
+      - script: |
+          const bt = blackboard.orchestrator.behaviorTree;
+          blackboard.btType = bt.type;
+          blackboard.childrenCount = bt.children.length;
+          blackboard.firstChild = bt.children[0];
+          blackboard.btStr = JSON.stringify(bt);
+      - assert: "{{btType}} === 'sequence'"
+        message: "root should be sequence"
+      - assert: "{{childrenCount}} > 0"
+        message: "should have children"
+      - assert: "{{firstChild}}.type === 'subagent'"
+        message: "first child should be subagent"
+      - assert: "{{firstChild}}.agentRef === 'agent:requirements-extractor'"
+        message: "first child should be requirements-extractor"
+      - assert: "{{btStr}}.includes('\"type\":\"parallel\"')"
+        message: "should have parallel type"
+      - assert: "{{btStr}}.includes('\"type\":\"subagent\"')"
+        message: "should have subagent type"
+
+  - name: "orchestrator should pass AgentLoader validation"
+    sequence:
+      - script: |
+          const { AgentLoader, orchestrator } = blackboard;
+          const mockResourceManager = { get: async () => null };
+          const loader = new AgentLoader({ resourceManager: mockResourceManager });
+          const result = loader.validateAgentDefinition(orchestrator);
+          blackboard.validationResult = result;
+          if (!result.valid) {
+            console.log('Validation errors:', result.errors);
+          }
+      - assert: "{{validationResult}}.valid === true"
+        message: "should be valid"
+      - script: |
+          blackboard.errorCount = blackboard.validationResult.errors.length;
+      - assert: "{{errorCount}} === 0"
+        message: "should have no errors"
+
+  - name: "orchestrator should list 8 sub-agents"
+    sequence:
+      - script: |
+          blackboard.subAgentCount = blackboard.orchestrator.subAgents.length;
+      - assert: "{{subAgentCount}} === 8"
+        message: "should have 8 sub-agents"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:requirements-extractor')"
+        message: "should include requirements-extractor"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:tool-analyzer')"
+        message: "should include tool-analyzer"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-discoverer')"
+        message: "should include agent-discoverer"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-designer')"
+        message: "should include agent-designer"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-generator')"
+        message: "should include agent-generator"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-validator')"
+        message: "should include agent-validator"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-tester')"
+        message: "should include agent-tester"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-improver')"
+        message: "should include agent-improver"
+
+  # Sub-Agent Prompts Validation
+  - name: "requirements-extractor should have extractRequirements prompt"
+    sequence:
+      - assert: "{{reqExtractor}}.prompts.extractRequirements !== undefined"
+        message: "should have extractRequirements prompt"
+      - assert: "{{reqExtractor}}.prompts.extractRequirements.template !== undefined"
+        message: "should have template"
+
+  - name: "agent-designer should have design prompts"
+    sequence:
+      - assert: "{{agentDesigner}}.prompts.designAgent !== undefined"
+        message: "should have designAgent prompt"
+      - assert: "{{agentDesigner}}.prompts.designWithComposition !== undefined"
+        message: "should have designWithComposition prompt"
+      - assert: "{{agentDesigner}}.prompts.composeAgents !== undefined"
+        message: "should have composeAgents prompt"
+
+  - name: "agent-generator should have generateAgentDef prompt"
+    sequence:
+      - assert: "{{agentGenerator}}.prompts.generateAgentDef !== undefined"
+        message: "should have generateAgentDef prompt"
+      - assert: "{{agentGenerator}}.prompts.generateAgentDef.template !== undefined"
+        message: "should have template"
+
+  # Data Flow Through Orchestrator
+  - name: "should output spec from requirements-extractor"
+    sequence:
+      - script: |
+          blackboard.reqExtractorNode = blackboard.orchestrator.behaviorTree.children[0];
+      - assert: "{{reqExtractorNode}}.outputUpdate.spec !== undefined"
+        message: "should output spec"
+
+  - name: "should have parallel analysis for tools and agents"
+    sequence:
+      - script: |
+          const parallelNode = blackboard.orchestrator.behaviorTree.children.find(c => c.type === 'parallel');
+          blackboard.parallelNode = parallelNode;
+          if (parallelNode) {
+            blackboard.toolAnalyzer = parallelNode.children.find(c => c.agentRef === 'agent:tool-analyzer');
+            blackboard.agentDiscoverer = parallelNode.children.find(c => c.agentRef === 'agent:agent-discoverer');
+          }
+      - assert: "{{parallelNode}} !== undefined"
+        message: "should have parallel node"
+      - script: |
+          blackboard.parallelChildrenCount = blackboard.parallelNode.children.length;
+      - assert: "{{parallelChildrenCount}} === 2"
+        message: "parallel should have 2 children"
+      - assert: "{{toolAnalyzer}} !== undefined"
+        message: "should have tool-analyzer"
+      - assert: "{{agentDiscoverer}} !== undefined"
+        message: "should have agent-discoverer"
+
+  - name: "should have validation and test loops"
+    sequence:
+      - script: |
+          const btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+          const repeatMatches = btStr.match(/"type":"repeat"/g) || [];
+          blackboard.repeatCount = repeatMatches.length;
+      - assert: "{{repeatCount}} >= 2"
+        message: "should have at least 2 repeat nodes"
+
+  - name: "should reference agent-generator"
+    sequence:
+      - script: |
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+      - assert: "{{btStr}}.includes('agent:agent-generator')"
+        message: "should include agent-generator"
+
+  # Prompt Output Schemas
+  - name: "extractRequirements should have valid output schema"
+    sequence:
+      - script: |
+          blackboard.schema = blackboard.reqExtractor.prompts.extractRequirements.outputSchema;
+      - assert: "{{schema}}.type === 'object'"
+        message: "schema type should be object"
+      - assert: "{{schema}}.required.includes('name')"
+        message: "should require name"
+      - assert: "{{schema}}.required.includes('purpose')"
+        message: "should require purpose"
+
+  - name: "generateAgentDef should have valid output schema"
+    sequence:
+      - script: |
+          blackboard.schema = blackboard.agentGenerator.prompts.generateAgentDef.outputSchema;
+      - assert: "{{schema}}.type === 'object'"
+        message: "schema type should be object"
+      - assert: "{{schema}}.properties.id.pattern === '^agent:'"
+        message: "id pattern should be ^agent:"
+      - assert: "{{schema}}.required.includes('id')"
+        message: "should require id"
+      - assert: "{{schema}}.required.includes('name')"
+        message: "should require name"
+      - assert: "{{schema}}.required.includes('behaviorTree')"
+        message: "should require behaviorTree"

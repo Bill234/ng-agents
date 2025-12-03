@@ -1,0 +1,297 @@
+id: agent:tool-analyzer
+name: ToolAnalyzer
+version: 1
+purpose: Discovers available tools and analyzes which ones are needed for agent
+  requirements
+tags:
+  - tools
+  - analysis
+  - discovery
+  - matching
+tools:
+  - ToolDiscovery
+behaviorTree:
+  type: sequence
+  name: Analyze Tools
+  children:
+    - type: action
+      name: Discover Available Tools
+      description: Find all available tools in the system
+      tool: ToolDiscovery
+      inputQuery:
+        query: ""
+        limit: 100
+      outputUpdate:
+        availableTools: "{{result.tools}}"
+    - type: prompt
+      name: Analyze Tool Gaps
+      description: Match requirements to tools and identify gaps
+      promptRef: analyzeToolGaps
+      inputQuery:
+        spec: "{{input.spec}}"
+        availableTools: "{{availableTools}}"
+      outputUpdate:
+        toolAnalysis: "{{result}}"
+        selectedTools: "{{result.capabilityMapping}}"
+        missingTools: "{{result.missingTools}}"
+prompts:
+  analyzeToolGaps:
+    version: 1
+    systemMessage: You are an expert at analyzing agent requirements and matching
+      them to available tools. Your task is to identify what tools exist vs what
+      is needed.
+    template: >-
+      Analyze the agent specification and compare against available tools to
+      identify gaps.
+
+
+      ## Agent Specification
+
+      {{json spec}}
+
+
+      ## Available Tools
+
+      {{json availableTools}}
+
+
+      ## Analysis Task
+
+      1. List the capabilities required by the specification
+
+      2. Match each capability to available tools
+
+      3. Identify capabilities that have NO matching tool
+
+      4. For missing tools, provide specification for creating them
+
+
+      Provide analysis in JSON format:
+
+      ```json
+
+      {
+        "capabilityMapping": [
+          { "capability": "description", "matchedTool": "ToolName or null", "confidence": 0.0-1.0 }
+        ],
+        "missingTools": [
+          {
+            "name": "NewToolName (must end with Tool)",
+            "description": "What the tool does",
+            "capability": "The capability it fulfills",
+            "inputSchema": { "type": "object", "properties": {...} },
+            "outputSchema": { "type": "object", "properties": {...} },
+            "priority": "high|medium|low"
+          }
+        ],
+        "allCapabilitiesCovered": true|false
+      }
+
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        capabilityMapping:
+          type: array
+        missingTools:
+          type: array
+        allCapabilitiesCovered:
+          type: boolean
+      required:
+        - capabilityMapping
+        - missingTools
+        - allCapabilitiesCovered
+    examples:
+      - input:
+          spec:
+            name: FileReader
+            requiredCapabilities:
+              - read files
+              - parse JSON
+          availableTools:
+            - name: ReadFileTool
+              description: Reads file contents
+        output:
+          capabilityMapping:
+            - capability: read files
+              matchedTool: ReadFileTool
+              confidence: 0.95
+            - capability: parse JSON
+              matchedTool: null
+              confidence: 0
+          missingTools:
+            - name: JsonParserTool
+              description: Parses JSON string into structured data
+              capability: parse JSON
+              inputSchema:
+                type: object
+                properties:
+                  jsonString:
+                    type: string
+              outputSchema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              priority: high
+          allCapabilitiesCovered: false
+  selectNextTool:
+    version: 1
+    systemMessage: You select the next tool to create from a list of missing tools.
+    template: >-
+      Select the next tool to create.
+
+
+      ## Missing Tools
+
+      {{json missingTools}}
+
+
+      ## Already Created
+
+      {{json createdTools}}
+
+
+      Return the next tool to create (highest priority that hasn't been
+      created):
+
+      ```json
+
+      {
+        "name": "ToolName",
+        "description": "...",
+        "inputSchema": {...},
+        "outputSchema": {...}
+      }
+
+      ```
+
+
+      If all tools are created, return: { "complete": true }
+    outputFormat: json
+  updateToolProgress:
+    version: 1
+    systemMessage: Track progress on tool creation.
+    template: |-
+      Update tool creation progress.
+
+      ## Current Tool
+      {{json currentTool}}
+
+      ## Tool Creation Result from Sub-Agent
+      {{json toolCreationResult}}
+
+      ## Missing Tools
+      {{json missingTools}}
+
+      ## Created Tools So Far
+      {{json createdTools}}
+
+      Based on the tool creation result:
+      - If toolCreationResult.success === true, add the tool to createdTools
+      - If all missing tools are now in createdTools, set complete to true
+
+      Return updated state:
+      ```json
+      {
+        "createdTools": ["ToolName1", "ToolName2"],
+        "complete": true|false
+      }
+      ```
+    outputFormat: json
+  reviewToolDecisions:
+    version: 1
+    systemMessage: You are an expert at reviewing tool selection decisions for AI
+      agents. Your task is to ensure the right tools are being selected and
+      created.
+    template: >-
+      Review the tool decisions made by the agent factory.
+
+
+      ## Agent Specification
+
+      {{json spec}}
+
+
+      ## Available Tools
+
+      {{json availableTools}}
+
+
+      ## Decisions Made
+
+      - Capability Mapping: {{json toolAnalysis.capabilityMapping}}
+
+      - Tools to Create: {{json toolAnalysis.missingTools}}
+
+
+      ## Review Checklist
+
+      1. Are existing tools being correctly matched to capabilities?
+
+      2. Are there tools being created that already exist (duplicates)?
+
+      3. Are there missing tools that should be created but aren't listed?
+
+      4. Are tool schemas reasonable for the capabilities they serve?
+
+      5. Is the priority ordering correct for tool creation?
+
+
+      Provide your review in JSON format:
+
+      ```json
+
+      {
+        "approved": true|false,
+        "concerns": [
+          { "severity": "high|medium|low", "issue": "description", "suggestion": "how to fix" }
+        ],
+        "suggestions": ["additional suggestions"],
+        "adjustedDecisions": null | {
+          "addTools": [...],
+          "removeTools": [...],
+          "modifySchemas": {...}
+        }
+      }
+
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        approved:
+          type: boolean
+        concerns:
+          type: array
+        suggestions:
+          type: array
+          items:
+            type: string
+        adjustedDecisions:
+          type:
+            - object
+            - "null"
+      required:
+        - approved
+        - concerns
+    examples:
+      - input:
+          spec:
+            name: FileReader
+            requiredCapabilities:
+              - read files
+          availableTools:
+            - name: ReadFileTool
+          toolAnalysis:
+            capabilityMapping:
+              - capability: read files
+                matchedTool: ReadFileTool
+                confidence: 0.95
+            missingTools: []
+        output:
+          approved: true
+          concerns: []
+          suggestions: []
+          adjustedDecisions: null

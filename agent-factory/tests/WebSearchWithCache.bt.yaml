@@ -1,0 +1,230 @@
+type: suite
+name: Web Search with Cache Agent E2E
+description: |
+  E2E Test: Agent Factory builds a Web Search with Cache Agent
+  Tests building a moderately complex agent with multiple sub-agents.
+
+beforeAll:
+  sequence:
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        exports:
+          - AgentLoader
+          - subagentDefinition
+          - promptDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/bt/src/index.js"
+        exports:
+          - BTPrototypeFactory
+          - actionDefinition
+          - sequenceDefinition
+          - selectorDefinition
+          - conditionDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - seedAgentFactorySubAgents
+          - loadAgentFactoryDefinition
+    - script: |
+        const { ResourceManager } = await import('/Users/williampearson/Legion/packages/ng/handles/resource-manager/src/index.js');
+        blackboard.resourceManager = await ResourceManager.getInstance();
+
+        const { AgentLoader, resourceManager } = blackboard;
+        blackboard.loader = new AgentLoader({ resourceManager });
+        await blackboard.loader.initialize();
+    - getHandle: agentStorage
+    - getHandle: handleLogging
+      as: logging
+    - script: |
+        const { BTPrototypeFactory, actionDefinition, sequenceDefinition, selectorDefinition, conditionDefinition, promptDefinition, subagentDefinition } = blackboard;
+        BTPrototypeFactory.register('action', actionDefinition);
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('selector', selectorDefinition);
+        BTPrototypeFactory.register('condition', conditionDefinition);
+        BTPrototypeFactory.register('prompt', promptDefinition);
+        BTPrototypeFactory.register('subagent', subagentDefinition);
+
+        // Seed Agent Factory sub-agents
+        await blackboard.seedAgentFactorySubAgents(blackboard.agentStorage);
+    - log: "Seeded Agent Factory sub-agents"
+    - script: |
+        const { agentStorage } = blackboard;
+
+        // Component 1: CacheSearcher
+        const cacheSearcher = {
+          id: 'agent:component-cache-searcher',
+          name: 'ComponentCacheSearcher',
+          version: 1,
+          purpose: 'Searches an in-memory cache for previously answered queries.',
+          tags: ['cache', 'search', 'lookup', 'memory'],
+          tools: [],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Search Cache',
+            children: [{
+              type: 'prompt',
+              name: 'Check Cache',
+              promptRef: 'checkCache',
+              inputQuery: { query: '{{input.query}}', cache: '{{input.cache}}' },
+              outputUpdate: { cacheHit: '{{result.found}}', cachedAnswer: '{{result.answer}}' }
+            }]
+          },
+          prompts: {
+            checkCache: {
+              template: 'Given this query: "{{query}}"\n\nAnd this cache:\n{{cache}}\n\nIs there a cached answer? Return JSON with found (boolean) and answer (string).',
+              outputSchema: {
+                type: 'object',
+                properties: {
+                  found: { type: 'boolean' },
+                  answer: { type: 'string' }
+                },
+                required: ['found', 'answer']
+              }
+            }
+          },
+          metrics: { executionCount: 100, successRate: 0.95 }
+        };
+        await agentStorage.saveAgent(cacheSearcher);
+
+        // Component 2: WebSearcher
+        const webSearcher = {
+          id: 'agent:component-web-searcher',
+          name: 'ComponentWebSearcher',
+          version: 1,
+          purpose: 'Performs a web search',
+          tags: ['web', 'search', 'internet'],
+          tools: ['WebSearch'],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Web Search',
+            children: [{
+              type: 'action',
+              name: 'Search Web',
+              tool: 'WebSearch',
+              inputQuery: { query: '{{input.query}}' },
+              outputUpdate: { searchResults: '{{result.results}}' }
+            }]
+          },
+          prompts: {},
+          metrics: { executionCount: 150, successRate: 0.90 }
+        };
+        await agentStorage.saveAgent(webSearcher);
+
+        // Component 3: Synthesizer
+        const synthesizer = {
+          id: 'agent:component-synthesizer',
+          name: 'ComponentSynthesizer',
+          version: 1,
+          purpose: 'Synthesizes search results into a coherent answer',
+          tags: ['synthesis', 'summarize', 'answer'],
+          tools: [],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Synthesize Answer',
+            children: [{
+              type: 'prompt',
+              name: 'Generate Answer',
+              promptRef: 'synthesize',
+              inputQuery: { query: '{{input.query}}', searchResults: '{{input.searchResults}}' },
+              outputUpdate: { synthesizedAnswer: '{{result.answer}}' }
+            }]
+          },
+          prompts: {
+            synthesize: {
+              template: 'Based on these search results, answer the query.\n\nQuery: {{query}}\n\nResults:\n{{searchResults}}\n\nReturn JSON with answer (string) and sources (array).',
+              outputSchema: {
+                type: 'object',
+                properties: {
+                  answer: { type: 'string' },
+                  sources: { type: 'array', items: { type: 'string' } }
+                },
+                required: ['answer', 'sources']
+              }
+            }
+          },
+          metrics: { executionCount: 200, successRate: 0.92 }
+        };
+        await agentStorage.saveAgent(synthesizer);
+
+        // Component 4: CacheWriter
+        const cacheWriter = {
+          id: 'agent:component-cache-writer',
+          name: 'ComponentCacheWriter',
+          version: 1,
+          purpose: 'Stores a query and answer in cache',
+          tags: ['cache', 'write', 'store'],
+          tools: [],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Write to Cache',
+            children: [{
+              type: 'prompt',
+              name: 'Store Result',
+              promptRef: 'storeInCache',
+              inputQuery: { query: '{{input.query}}', answer: '{{input.answer}}', existingCache: '{{input.cache}}' },
+              outputUpdate: { updatedCache: '{{result.cache}}' }
+            }]
+          },
+          prompts: {
+            storeInCache: {
+              template: 'Add this entry to the cache:\nQuery: {{query}}\nAnswer: {{answer}}\n\nExisting cache:\n{{existingCache}}\n\nReturn JSON with cache (array).',
+              outputSchema: {
+                type: 'object',
+                properties: {
+                  cache: { type: 'array' }
+                },
+                required: ['cache']
+              }
+            }
+          },
+          metrics: { executionCount: 100, successRate: 0.98 }
+        };
+        await agentStorage.saveAgent(cacheWriter);
+
+        blackboard.testStartTime = Date.now();
+        console.log('Seeded component agents: cache-searcher, web-searcher, synthesizer, cache-writer');
+    - log: "Setup complete"
+
+children:
+  - name: "Agent Factory builds web search agent with caching sub-agents"
+    sequence:
+      - script: |
+          const { loader, loadAgentFactoryDefinition } = blackboard;
+
+          const requirements = [
+            'Build an agent called "SmartResearchAssistant" that:',
+            '1. Takes a research query as input',
+            '2. First checks a cache of previous queries to see if we already have an answer',
+            '3. If cache miss, performs a web search to find relevant information',
+            '4. Synthesizes the search results into a coherent answer',
+            '5. Stores the new query and answer in the cache for future use',
+            '6. Returns the final answer',
+            '',
+            'IMPORTANT: There are existing agents for cache operations, web searching, and synthesis.',
+            'Please COMPOSE them together using a selector/sequence pattern with conditions.'
+          ].join('\n');
+
+          console.log('=== PHASE 1: Build Agent via Factory ===');
+
+          const agentFactory = await loadAgentFactoryDefinition();
+
+          const buildResult = await loader.executeAgent(agentFactory, {
+            data: {
+              input: {
+                requirements,
+                testInput: {
+                  query: 'What are the benefits of exercise?',
+                  cache: '[]'
+                }
+              }
+            },
+            timeoutMs: 300000
+          });
+
+          console.log('Build result success:', buildResult.success);
+          console.log('Build result status:', buildResult.status);
+
+          blackboard.buildResult = buildResult;
+
+      - assert: "{{buildResult}} !== undefined"
+        message: "build result should be defined"

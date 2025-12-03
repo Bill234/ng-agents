@@ -1,0 +1,35 @@
+id: agent:agent-tester
+name: AgentTester
+version: 1
+purpose: Tests agents with scenarios and validates their behavior
+tags:
+  - testing
+  - agent
+  - validation
+  - execution
+tools:
+  - AgentTest
+  - AgentExecute
+  - LogAnalyze
+behaviorTree:
+  type: sequence
+  name: Test Agent
+  children:
+    - type: action
+      name: Run Agent Tests
+      description: Execute comprehensive agent tests
+      tool: AgentTest
+      inputQuery:
+        agentDef: "{{input.agentDef}}"
+        testScenarios:
+          - name: Default Test
+            input: "{{input.testInput}}"
+            expectedOutcome: success
+        testPrompts: true
+        testSubAgents: true
+      outputUpdate:
+        testResult: "{{result}}"
+        success: "{{result.passed}}"
+    - type: succeed
+      name: Test Complete
+prompts: {}

@@ -1,0 +1,115 @@
+type: suite
+name: Sub-Agent Definitions
+description: Validates all sub-agent JSON definitions have correct structure
+
+beforeAll:
+  sequence:
+    - import:
+        from: "@ng/agents-definitions/utils/agentFileLoader"
+        exports:
+          - loadAgentByName
+    - import:
+        from: "@ng/agents-agent-factory"
+        exports:
+          - AGENTS_DIR
+    - log: "Loaded loadAgentByName and AGENTS_DIR"
+
+children:
+  - name: "All sub-agents have valid structure"
+    sequence:
+      - script: |
+          blackboard.agentNames = ['requirements-extractor', 'tool-analyzer', 'agent-discoverer', 'agent-designer', 'agent-generator', 'agent-validator', 'agent-tester', 'agent-improver', 'agent-factory'];
+
+      - forEach:
+          items: "{{agentNames}}"
+          as: agentName
+          child:
+            sequence:
+              - script: |
+                  const { loadAgentByName, AGENTS_DIR } = blackboard;
+                  blackboard.def = await loadAgentByName(AGENTS_DIR, blackboard.agentName);
+
+              - assert: "{{def}}.id.startsWith('agent:')"
+                message: "{{agentName}} has valid id starting with 'agent:'"
+
+              - assert: "typeof {{def}}.name === 'string'"
+                message: "{{agentName}} has name"
+
+              - assert: "typeof {{def}}.version === 'number'"
+                message: "{{agentName}} has version"
+
+              - assert: "typeof {{def}}.purpose === 'string'"
+                message: "{{agentName}} has purpose"
+
+              - assert: "{{def}}.behaviorTree !== undefined"
+                message: "{{agentName}} has behaviorTree"
+
+              - assert: "{{def}}.behaviorTree.type !== undefined"
+                message: "{{agentName}} behaviorTree has type"
+
+              - assert: "Array.isArray({{def}}.tools)"
+                message: "{{agentName}} has tools array"
+
+              - assert: "typeof {{def}}.prompts === 'object'"
+                message: "{{agentName}} has prompts object"
+
+              - log: "{{agentName}} - has valid structure: PASSED"
+
+  - name: "Orchestrator (agent-factory) - has helper prompts"
+    sequence:
+      - script: |
+          const { loadAgentByName, AGENTS_DIR } = blackboard;
+          blackboard.orchestrator = await loadAgentByName(AGENTS_DIR, 'agent-factory');
+          blackboard.promptKeys = Object.keys(blackboard.orchestrator.prompts);
+
+      - assert: "{{promptKeys}}.includes('popSubAgent')"
+        message: "has popSubAgent prompt"
+
+      - assert: "{{promptKeys}}.includes('checkProgress')"
+        message: "has checkProgress prompt"
+
+      - assert: "{{promptKeys}}.includes('mergeSubAgentResults')"
+        message: "has mergeSubAgentResults prompt"
+
+      - assert: "{{promptKeys}}.includes('convertToPrompt')"
+        message: "has convertToPrompt prompt"
+
+      - log: "Orchestrator helper prompts: PASSED"
+
+  - name: "Orchestrator (agent-factory) - has subAgents list"
+    sequence:
+      - script: |
+          const { loadAgentByName, AGENTS_DIR } = blackboard;
+          blackboard.orchestrator = await loadAgentByName(AGENTS_DIR, 'agent-factory');
+
+      - assert: "{{orchestrator}}.subAgents !== undefined"
+        message: "subAgents is defined"
+
+      - assert: "{{orchestrator}}.subAgents.length === 8"
+        message: "has 8 sub-agents"
+
+      - log: "Orchestrator subAgents list: PASSED"
+
+  - name: "Orchestrator (agent-factory) - uses subagent nodes"
+    sequence:
+      - script: |
+          const { loadAgentByName, AGENTS_DIR } = blackboard;
+          blackboard.orchestrator = await loadAgentByName(AGENTS_DIR, 'agent-factory');
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+
+      - assert: "{{btStr}}.includes('\"type\":\"subagent\"')"
+        message: "behavior tree uses subagent nodes"
+
+      - log: "Orchestrator uses subagent nodes: PASSED"
+
+  - name: "Orchestrator (agent-factory) - has parallel analysis step"
+    sequence:
+      - script: |
+          const { loadAgentByName, AGENTS_DIR } = blackboard;
+          blackboard.orchestrator = await loadAgentByName(AGENTS_DIR, 'agent-factory');
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+
+      - assert: "{{btStr}}.includes('\"type\":\"parallel\"')"
+        message: "behavior tree has parallel step"
+
+      - log: "Orchestrator has parallel step: PASSED"

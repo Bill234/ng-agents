@@ -1,0 +1,332 @@
+type: suite
+name: AgentFactory Orchestrator
+description: Tests the thin orchestrator that composes sub-agents
+
+beforeAll:
+  sequence:
+    - import:
+        from: "@ng/agents-definitions/utils/agentFileLoader"
+        exports:
+          - loadAgentByName
+    - import:
+        from: "@ng/agents-agent-factory"
+        exports:
+          - AGENTS_DIR
+    - script: |
+        const { loadAgentByName, AGENTS_DIR } = blackboard;
+        blackboard.orchestrator = await loadAgentByName(AGENTS_DIR, 'agent-factory');
+    - log: "Loaded orchestrator definition"
+
+children:
+  # Basic properties tests
+  - name: "basic properties - has correct id"
+    sequence:
+      - assert: "{{orchestrator}}.id === 'agent:agent-factory'"
+        message: "should have correct id"
+
+  - name: "basic properties - has version 2"
+    sequence:
+      - assert: "{{orchestrator}}.version === 2"
+        message: "should have version 2 (upgraded)"
+
+  - name: "basic properties - has no tools"
+    sequence:
+      - script: |
+          blackboard.toolsLength = blackboard.orchestrator.tools.length;
+      - assert: "{{toolsLength}} === 0"
+        message: "should have no tools (composition only)"
+
+  - name: "basic properties - has helper prompts"
+    sequence:
+      - script: |
+          blackboard.prompts = Object.keys(blackboard.orchestrator.prompts);
+      - assert: "{{prompts}}.includes('popSubAgent')"
+        message: "has popSubAgent prompt"
+      - assert: "{{prompts}}.includes('checkProgress')"
+        message: "has checkProgress prompt"
+      - assert: "{{prompts}}.includes('mergeSubAgentResults')"
+        message: "has mergeSubAgentResults prompt"
+      - assert: "{{prompts}}.includes('convertToPrompt')"
+        message: "has convertToPrompt prompt"
+
+  # Sub-agents tests
+  - name: "sub-agents - lists all sub-agents"
+    sequence:
+      - assert: "{{orchestrator}}.subAgents.includes('agent:requirements-extractor')"
+        message: "has requirements-extractor"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:tool-analyzer')"
+        message: "has tool-analyzer"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-discoverer')"
+        message: "has agent-discoverer"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-designer')"
+        message: "has agent-designer"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-generator')"
+        message: "has agent-generator"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-validator')"
+        message: "has agent-validator"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-tester')"
+        message: "has agent-tester"
+      - assert: "{{orchestrator}}.subAgents.includes('agent:agent-improver')"
+        message: "has agent-improver"
+
+  - name: "sub-agents - has 8 sub-agents"
+    sequence:
+      - assert: "{{orchestrator}}.subAgents.length === 8"
+        message: "should have 8 sub-agents"
+
+  # Behavior tree structure tests
+  - name: "behavior tree - has behaviorTree"
+    sequence:
+      - assert: "{{orchestrator}}.behaviorTree !== undefined"
+        message: "should have behaviorTree"
+
+  - name: "behavior tree - is a sequence at root"
+    sequence:
+      - assert: "{{orchestrator}}.behaviorTree.type === 'sequence'"
+        message: "should be a sequence at root"
+
+  - name: "behavior tree - uses subagent nodes"
+    sequence:
+      - script: |
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+      - assert: "{{btStr}}.includes('\"type\":\"subagent\"')"
+        message: "should use subagent nodes"
+
+  - name: "behavior tree - references requirements-extractor first"
+    sequence:
+      - assert: "{{orchestrator}}.behaviorTree.children[0].agentRef === 'agent:requirements-extractor'"
+        message: "should reference requirements-extractor first"
+
+  - name: "behavior tree - has parallel analysis step"
+    sequence:
+      - script: |
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+      - assert: "{{btStr}}.includes('\"type\":\"parallel\"')"
+        message: "should have parallel analysis step"
+
+  - name: "behavior tree - has repeat nodes for validation and test loops"
+    sequence:
+      - script: |
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+          const repeatMatches = blackboard.btStr.match(/"type":"repeat"/g) || [];
+          blackboard.repeatCount = repeatMatches.length;
+      - assert: "{{repeatCount}} >= 2"
+        message: "should have repeat nodes for validation and test loops"
+
+  # Data flow tests
+  - name: "data flow - outputs spec from requirements-extractor"
+    sequence:
+      - script: |
+          blackboard.reqExtractor = blackboard.orchestrator.behaviorTree.children[0];
+      - assert: "{{reqExtractor}}.outputUpdate.spec !== undefined"
+        message: "should output spec from requirements-extractor"
+
+  - name: "data flow - passes spec to tool-analyzer"
+    sequence:
+      - script: |
+          const bt = blackboard.orchestrator.behaviorTree;
+          const parallelStep = bt.children.find(c => c.type === 'parallel');
+          const toolAnalyzer = parallelStep.children.find(c => c.agentRef === 'agent:tool-analyzer');
+          blackboard.inputQuerySpec = toolAnalyzer.inputQuery.spec;
+      - assert: "{{inputQuerySpec}}.includes('spec')"
+        message: "should pass spec to tool-analyzer"
+
+  - name: "data flow - outputs generatedAgent"
+    sequence:
+      - script: |
+          blackboard.btStr = JSON.stringify(blackboard.orchestrator.behaviorTree);
+      - assert: "{{btStr}}.includes('generatedAgent')"
+        message: "should output generatedAgent"
+
+  # Comparison tests
+  - name: "comparison - orchestrator has helper prompts only"
+    sequence:
+      - script: |
+          blackboard.promptCount = Object.keys(blackboard.orchestrator.prompts).length;
+      - assert: "{{promptCount}} === 4"
+        message: "orchestrator should have 4 helper prompts"
+
+  - name: "comparison - sub-agents have substantive prompts"
+    sequence:
+      - script: |
+          const { loadAgentByName, AGENTS_DIR } = blackboard;
+          const reqExtractor = await loadAgentByName(AGENTS_DIR, 'requirements-extractor');
+          blackboard.reqExtractorPromptCount = Object.keys(reqExtractor.prompts).length;
+      - assert: "{{reqExtractorPromptCount}} > 0"
+        message: "sub-agents should have substantive prompts"
+
+  - name: "comparison - orchestrator composes 8 sub-agents"
+    sequence:
+      - assert: "{{orchestrator}}.subAgents.length === 8"
+        message: "orchestrator should compose 8 sub-agents"
+
+  # Additional structure tests (from AgentFactoryStructure.test.js)
+  - name: "structure - parallel node has correct name"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) {
+              return findNodeByName(tree.child, name);
+            }
+            return null;
+          }
+          blackboard.parallelNode = findNodeByName(blackboard.orchestrator.behaviorTree, 'Analyze Tools and Agents');
+      - assert: "{{parallelNode}} !== null"
+        message: "should have parallel node named 'Analyze Tools and Agents'"
+      - assert: "{{parallelNode}}.type === 'parallel'"
+        message: "node should be parallel type"
+      - assert: "{{parallelNode}}.children.length === 2"
+        message: "parallel node should have 2 children"
+
+  - name: "structure - parallel runs tool-analyzer and agent-discoverer"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) return findNodeByName(tree.child, name);
+            return null;
+          }
+          const parallelNode = findNodeByName(blackboard.orchestrator.behaviorTree, 'Analyze Tools and Agents');
+          blackboard.refs = parallelNode.children.map(c => c.agentRef);
+      - assert: "{{refs}}.includes('agent:tool-analyzer')"
+        message: "should include tool-analyzer"
+      - assert: "{{refs}}.includes('agent:agent-discoverer')"
+        message: "should include agent-discoverer"
+
+  - name: "structure - has agent-designer node"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) return findNodeByName(tree.child, name);
+            return null;
+          }
+          blackboard.designerNode = findNodeByName(blackboard.orchestrator.behaviorTree, 'Design Agent');
+      - assert: "{{designerNode}} !== null"
+        message: "should have node named 'Design Agent'"
+      - assert: "{{designerNode}}.type === 'subagent'"
+        message: "designer should be subagent type"
+      - assert: "{{designerNode}}.agentRef === 'agent:agent-designer'"
+        message: "should reference agent-designer"
+
+  - name: "structure - validation loop has correct config"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) return findNodeByName(tree.child, name);
+            return null;
+          }
+          blackboard.validationLoop = findNodeByName(blackboard.orchestrator.behaviorTree, 'Validation Loop');
+      - assert: "{{validationLoop}} !== null"
+        message: "should have 'Validation Loop'"
+      - assert: "{{validationLoop}}.type === 'repeat'"
+        message: "should be repeat type"
+      - assert: "{{validationLoop}}.maxIterations === 3"
+        message: "maxIterations should be 3"
+
+  - name: "structure - test loop has correct config"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) return findNodeByName(tree.child, name);
+            return null;
+          }
+          blackboard.testLoop = findNodeByName(blackboard.orchestrator.behaviorTree, 'Test Loop');
+      - assert: "{{testLoop}} !== null"
+        message: "should have 'Test Loop'"
+      - assert: "{{testLoop}}.type === 'repeat'"
+        message: "should be repeat type"
+      - assert: "{{testLoop}}.maxIterations === 3"
+        message: "maxIterations should be 3"
+
+  - name: "structure - uses agent-validator in validation loop"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) return findNodeByName(tree.child, name);
+            return null;
+          }
+          blackboard.validatorNode = findNodeByName(blackboard.orchestrator.behaviorTree, 'Validate Agent');
+      - assert: "{{validatorNode}} !== null"
+        message: "should have 'Validate Agent' node"
+      - assert: "{{validatorNode}}.agentRef === 'agent:agent-validator'"
+        message: "should reference agent-validator"
+
+  - name: "structure - uses agent-tester in test loop"
+    sequence:
+      - script: |
+          function findNodeByName(tree, name) {
+            if (tree.name === name) return tree;
+            if (tree.children) {
+              for (const child of tree.children) {
+                const found = findNodeByName(child, name);
+                if (found) return found;
+              }
+            }
+            if (tree.child) return findNodeByName(tree.child, name);
+            return null;
+          }
+          blackboard.testerNode = findNodeByName(blackboard.orchestrator.behaviorTree, 'Test Agent');
+      - assert: "{{testerNode}} !== null"
+        message: "should have 'Test Agent' node"
+      - assert: "{{testerNode}}.agentRef === 'agent:agent-tester'"
+        message: "should reference agent-tester"
+
+  - name: "structure - uses agent-improver for fixes"
+    sequence:
+      - script: |
+          function findNodeByType(tree, type) {
+            const results = [];
+            function search(node) {
+              if (node.type === type) results.push(node);
+              if (node.children) node.children.forEach(search);
+              if (node.child) search(node.child);
+            }
+            search(tree);
+            return results;
+          }
+          const improverNodes = findNodeByType(blackboard.orchestrator.behaviorTree, 'subagent')
+            .filter(n => n.agentRef === 'agent:agent-improver');
+          blackboard.improverCount = improverNodes.length;
+      - assert: "{{improverCount}} > 0"
+        message: "should have agent-improver nodes"

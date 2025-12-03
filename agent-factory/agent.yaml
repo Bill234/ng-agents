@@ -1,0 +1,24 @@
+id: agent:agent-factory
+name: AgentFactory
+version: 1
+tags: [generation, meta-agent]
+
+purpose: Build agents from natural language requirements
+
+description: README.md
+
+tools: [Read, WebSearch, AgentDiscovery]
+
+subAgents:
+  - requirements-extractor
+  - tool-analyzer
+  - agent-designer
+  - agent-generator
+  - agent-validator
+  - agent-tester
+  - agent-improver
+
+prompts:
+  checkProgress:
+    template: "Check if {{task}} is complete..."
+    outputSchema: { type: object, properties: { done: { type: boolean } } }

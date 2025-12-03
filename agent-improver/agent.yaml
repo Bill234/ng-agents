@@ -1,0 +1,513 @@
+id: agent:agent-improver
+name: AgentImprover
+version: 1
+purpose: Analyzes failures and improves agent definitions
+tags:
+  - improvement
+  - debugging
+  - analysis
+  - fixes
+tools: []
+behaviorTree:
+  type: selector
+  name: Improvement Strategy
+  children:
+    - type: sequence
+      name: Fix Validation Errors
+      children:
+        - type: condition
+          name: Has Validation Errors
+          check: input.validationErrors && input.validationErrors.length > 0
+        - type: prompt
+          name: Fix Validation Issues
+          promptRef: fixValidationIssues
+          inputQuery:
+            generatedAgent: "{{input.agentDef}}"
+            validationResult: "{{input.validationResult}}"
+            availableTools: "{{input.availableTools}}"
+          outputUpdate:
+            fixedAgent: "{{result}}"
+            improvements: "{{result.changes}}"
+    - type: sequence
+      name: Fix Test Failures
+      children:
+        - type: condition
+          name: Has Test Result
+          check: input.testResult && input.testResult.passed === false
+        - type: prompt
+          name: Analyze Failures
+          promptRef: analyzeFailures
+          inputQuery:
+            agentDef: "{{input.agentDef}}"
+            testResult: "{{input.testResult}}"
+            availableTools: "{{input.availableTools}}"
+          outputUpdate:
+            analysis: "{{result}}"
+        - type: prompt
+          name: Apply Fixes
+          promptRef: improveAgent
+          inputQuery:
+            agentDef: "{{input.agentDef}}"
+            spec: "{{input.spec}}"
+            analysis: "{{analysis}}"
+            availableTools: "{{input.availableTools}}"
+          outputUpdate:
+            fixedAgent: "{{result}}"
+            improvements: "{{result.changes}}"
+prompts:
+  analyzeFailures:
+    version: 2
+    systemMessage: You are an expert at debugging AI agents. Your task is to analyze structured test results and identify
+      why an agent failed and how to fix it.
+    template: |-
+      Analyze the structured test results and identify improvement opportunities.
+
+      ## Test Summary
+      - Overall Passed: {{testResult.passed}}
+      - Total Tests: {{testResult.summary.totalTests}}
+      - Passed: {{testResult.summary.passed}}
+      - Failed: {{testResult.summary.failed}}
+
+      ## Prompt Test Results
+      {{json promptTests}}
+
+      ## Sub-Agent Test Results
+      {{json subAgentTests}}
+
+      ## Integration Test Results
+      {{json integrationTests}}
+
+      ## Aggregated Failures (with suggestions)
+      {{json failures}}
+
+      ## Current Agent Definition
+      {{json agentDef}}
+
+      ## Analysis Instructions
+      1. Analyze failures by type (prompt, subAgent, integration)
+      2. For prompt failures: check template, examples, outputSchema
+      3. For sub-agent failures: check if agent exists, is properly configured
+      4. For integration failures: check data flow, tool usage, behavior tree logic
+      5. Use the suggestions from the failures array as starting points
+
+      Provide analysis in JSON format:
+      ```json
+      {
+        "hypotheses": [
+          {
+            "issue": "Brief description of the issue",
+            "failureType": "prompt|subAgent|integration",
+            "failedTarget": "name of prompt/agent/scenario that failed",
+            "rootCause": "Why this is happening",
+            "suggestedFix": "Specific fix to apply",
+            "affectedPart": "behaviorTree|prompts|inputQuery|outputUpdate",
+            "confidence": 0.0-1.0
+          }
+        ],
+        "summary": "Overall analysis summary",
+        "priority": "Which hypothesis to address first",
+        "fixOrder": ["ordered list of fixes to apply"]
+      }
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        hypotheses:
+          type: array
+        summary:
+          type: string
+        priority:
+          type: string
+        fixOrder:
+          type: array
+          items:
+            type: string
+      required:
+        - hypotheses
+        - summary
+    examples:
+      - input:
+          testResult:
+            passed: false
+            summary:
+              totalTests: 3
+              passed: 1
+              failed: 2
+          promptTests:
+            - promptName: analyze
+              passed: false
+              errors:
+                - Missing examples
+          subAgentTests: []
+          integrationTests:
+            - scenarioName: basic
+              passed: false
+              errors:
+                - Expected success, got failure
+          failures:
+            - type: prompt
+              target: analyze
+              error: Missing examples
+              suggestion: Add examples array
+          agentDef:
+            id: agent:test
+            prompts:
+              analyze:
+                template: ...
+        output:
+          hypotheses:
+            - issue: Prompt missing examples
+              failureType: prompt
+              failedTarget: analyze
+              rootCause: Prompt 'analyze' has outputSchema but no examples for TemplatedPrompt
+              suggestedFix: Add examples array with input/output pairs to the analyze prompt
+              affectedPart: prompts
+              confidence: 0.95
+          summary: Prompt configuration issue - missing required examples
+          priority: Prompt missing examples
+          fixOrder:
+            - Add examples to analyze prompt
+            - Re-run tests
+  fixValidationIssues:
+    version: 1
+    systemMessage: You are an expert at fixing AI agent definition issues. Your task is to fix validation errors found before testing.
+    template: |-
+      Fix the validation issues in the agent definition.
+
+      ## Current Agent Definition
+      {{json generatedAgent}}
+
+      ## Validation Result
+      {{json validationResult}}
+
+      ## Available Tools (the agent can ONLY use these)
+      {{json availableTools}}
+
+      ## Issues to Fix
+      - Errors: {{json validationResult.errors}}
+      - Warnings: {{json validationResult.warnings}}
+      - Tool Validation: {{json validationResult.toolValidation}}
+      - Prompt Validation: {{json validationResult.promptValidation}}
+      - BT Validation: {{json validationResult.behaviorTreeValidation}}
+
+      ## Fix Instructions
+      1. Fix ALL errors (these will prevent execution)
+      2. Address high-priority warnings
+      3. For missing tools: replace action with prompt node or remove
+      4. For prompt issues: add missing examples, fix schemas
+      5. For BT issues: fix structure problems
+
+      IMPORTANT: Only use tools from the Available Tools list!
+
+      Generate the COMPLETE fixed agent definition.
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: "^agent:"
+        version:
+          type: integer
+        name:
+          type: string
+        behaviorTree:
+          type: object
+        prompts:
+          type: object
+      required:
+        - id
+        - name
+        - behaviorTree
+    examples:
+      - input:
+          generatedAgent:
+            id: agent:test
+            name: Test
+            behaviorTree:
+              type: sequence
+              children:
+                - type: action
+                  tool: FakeTool
+          validationResult:
+            valid: false
+            errors:
+              - Tool 'FakeTool' not in available tools
+            toolValidation:
+              missingTools:
+                - FakeTool
+          availableTools:
+            - ReadFileTool
+            - WriteTool
+        output:
+          id: agent:test
+          version: 1
+          name: Test
+          behaviorTree:
+            type: sequence
+            children:
+              - type: prompt
+                name: Handle Task
+                promptRef: handleTask
+          prompts:
+            handleTask:
+              template: Handle the task
+              outputSchema: {}
+  improveAgent:
+    version: 2
+    systemMessage: "You are an expert at improving AI agents. Your task is to modify an agent definition to fix identified
+      issues. CRITICAL: You must ONLY use tools from the Available Tools list."
+    template: >-
+      Improve the agent definition based on the analysis.
+
+
+      ## Current Agent Definition
+
+      {{json agentDef}}
+
+
+      ## Original Specification
+
+      {{json spec}}
+
+
+      ## Available Tools (the agent can ONLY use these)
+
+      {{json availableTools}}
+
+
+      ## Analysis
+
+      {{json analysis}}
+
+
+      ## Instructions
+
+      1. Address the highest priority hypothesis first
+
+      2. Make minimal, targeted changes
+
+      3. Preserve working parts of the agent
+
+      4. Ensure the improved definition is valid JSON
+
+      5. CRITICAL: If any action node uses a tool NOT in Available Tools, replace it with a prompt node or use a valid
+      tool!
+
+
+      Generate the COMPLETE improved agent definition (not just the changes).
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: "^agent:"
+        version:
+          type: integer
+        name:
+          type: string
+        purpose:
+          type: string
+        behaviorTree:
+          type: object
+        prompts:
+          type: object
+        handles:
+          type: array
+        tools:
+          type: array
+        successCriteria:
+          type: array
+      required:
+        - id
+        - name
+        - behaviorTree
+    examples:
+      - input:
+          agentDef:
+            id: agent:test
+            name: Test
+            behaviorTree:
+              type: sequence
+              children:
+                - type: action
+                  tool: FakeTool
+          spec:
+            name: Test
+            requiredCapabilities:
+              - read files
+          availableTools:
+            - name: Read
+              description: Read file contents
+          analysis:
+            hypotheses:
+              - issue: Tool 'FakeTool' not in available tools
+                suggestedFix: Use 'Read' tool instead
+            summary: Fix invalid tool reference
+            priority: Tool not found
+        output:
+          id: agent:test
+          version: 2
+          name: Test
+          purpose: Test agent
+          behaviorTree:
+            type: sequence
+            children:
+              - type: action
+                tool: Read
+                inputQuery:
+                  file_path: "{{input.filePath}}"
+                outputUpdate:
+                  content: "{{result.content}}"
+          prompts: {}
+          tools:
+            - Read
+          successCriteria: []
+  reviewImprovementPlan:
+    version: 1
+    systemMessage: You are an expert at reviewing improvement plans for AI agents. Your task is to ensure proposed fixes
+      address root causes.
+    template: |-
+      Review the proposed improvement plan before applying it.
+
+      ## Current Agent Definition
+      {{json agentDef}}
+
+      ## Test Failures
+      {{json testResult}}
+
+      ## Failure Analysis
+      {{json analysis}}
+
+      ## Progress History
+      {{json progressHistory}}
+
+      ## Review Checklist
+      1. Does the analysis correctly identify the root cause?
+      2. Is the proposed fix addressing the root cause (not just symptoms)?
+      3. Based on progress history, are we making actual progress or stalled?
+      4. Should we try a fundamentally different approach?
+
+      Progress indicators:
+      - errorCount decreasing = progress
+      - passedTests increasing = progress  
+      - Same metrics for 2+ iterations = stall
+
+      Provide your review in JSON format:
+      ```json
+      {
+        "approved": true|false,
+        "isStalled": true|false,
+        "concerns": ["list of concerns"],
+        "alternativeApproach": "if stalled, suggest a different approach",
+        "confidenceInFix": 0.0-1.0
+      }
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        approved:
+          type: boolean
+        isStalled:
+          type: boolean
+        concerns:
+          type: array
+          items:
+            type: string
+        alternativeApproach:
+          type:
+            - string
+            - "null"
+        confidenceInFix:
+          type: number
+          minimum: 0
+          maximum: 1
+      required:
+        - approved
+        - isStalled
+    examples:
+      - input:
+          agentDef:
+            id: agent:test
+            name: Test
+          testResult:
+            success: false
+            error: Tool not found
+          analysis:
+            hypotheses:
+              - issue: Tool mismatch
+                confidence: 0.9
+            summary: Fix tool name
+          progressHistory:
+            - iteration: 1
+              errorCount: 1
+        output:
+          approved: true
+          isStalled: false
+          concerns: []
+          alternativeApproach: null
+          confidenceInFix: 0.85
+  trackProgress:
+    version: 1
+    systemMessage: You track progress in test-improve iterations to detect stalls.
+    template: |-
+      Update progress tracking for this iteration.
+
+      ## Current Test Result
+      {{json testResult}}
+
+      ## Previous Progress History
+      {{json progressHistory}}
+
+      ## Current Iteration
+      {{iteration}}
+
+      Calculate metrics and update history:
+      ```json
+      {
+        "progressHistory": [
+          { "iteration": 1, "errorCount": N, "passedTests": M, "metrics": {...} },
+          ...
+        ],
+        "isProgressing": true|false,
+        "stallDetected": true|false,
+        "recommendation": "continue|changeApproach|abort"
+      }
+      ```
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        progressHistory:
+          type: array
+        isProgressing:
+          type: boolean
+        stallDetected:
+          type: boolean
+        recommendation:
+          type: string
+      required:
+        - progressHistory
+        - isProgressing
+        - stallDetected
+    examples:
+      - input:
+          testResult:
+            success: false
+            error: Timeout
+          progressHistory:
+            - iteration: 1
+              errorCount: 2
+          iteration: 2
+        output:
+          progressHistory:
+            - iteration: 1
+              errorCount: 2
+            - iteration: 2
+              errorCount: 1
+          isProgressing: true
+          stallDetected: false
+          recommendation: continue

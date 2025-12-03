@@ -1,0 +1,86 @@
+type: suite
+name: Single Prompt Node Test
+description: Test a single prompt node execution
+
+beforeAll:
+  sequence:
+    - import:
+        from: "@ng/agents-definitions"
+        exports:
+          - AgentLoader
+          - promptDefinition
+    - import:
+        from: "@ng/agents-bt"
+        exports:
+          - BTPrototypeFactory
+          - sequenceDefinition
+    - script: |
+        const { ResourceManager } = await import('@ng/handles-resource-manager');
+        blackboard.resourceManager = await ResourceManager.getInstance();
+
+        const { BTPrototypeFactory, sequenceDefinition, promptDefinition } = blackboard;
+        BTPrototypeFactory.clearCache();
+        BTPrototypeFactory._definitions.clear();
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('prompt', promptDefinition);
+    - log: "Setup complete"
+
+children:
+  - name: "should execute a single prompt node"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager } = blackboard;
+
+          // Minimal agent with just one prompt
+          const simpleAgent = {
+            id: 'agent:test-single-prompt',
+            name: 'TestSinglePrompt',
+            behaviorTree: {
+              type: 'sequence',
+              children: [
+                {
+                  type: 'prompt',
+                  promptRef: 'testPrompt',
+                  inputQuery: {
+                    message: '{{input.message}}'
+                  },
+                  outputUpdate: {
+                    response: '{{result}}'
+                  }
+                }
+              ]
+            },
+            prompts: {
+              testPrompt: {
+                version: 1,
+                systemMessage: 'You are a helpful assistant.',
+                template: 'Respond to this: {{message}}',
+                outputFormat: 'text'
+              }
+            }
+          };
+
+          console.log('Creating AgentLoader...');
+          const loader = new AgentLoader({ resourceManager });
+
+          console.log('Executing agent...');
+          const startTime = Date.now();
+
+          const result = await loader.executeAgent(simpleAgent, {
+            input: {
+              message: 'Say "Hello World"'
+            },
+            timeoutMs: 60000
+          });
+
+          console.log('Result success:', result.success);
+          console.log('Result status:', result.status);
+          console.log('Time:', Date.now() - startTime, 'ms');
+
+          blackboard.result = result;
+
+      - assert: "{{result}}.success === true"
+        message: "execution should succeed"
+
+      - assert: "{{result}}.blackboard === undefined || {{result}}.blackboard.response !== undefined"
+        message: "response should be defined in blackboard if present"

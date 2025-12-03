@@ -1,0 +1,128 @@
+type: suite
+name: Subagent Node
+description: Test the subagent BT node - can it load and execute agents from storage?
+
+beforeAll:
+  sequence:
+    - log: "Starting imports..."
+    - import:
+        from: "@ng/agents-bt"
+        exports:
+          - BTPrototypeFactory
+          - sequenceDefinition
+          - succeedDefinition
+    - log: "BT imports done"
+    - import:
+        from: "@ng/agents-definitions"
+        exports:
+          - AgentLoader
+          - promptDefinition
+          - subagentDefinition
+    - log: "Definitions imports done"
+    - getHandle: agentStorage
+    - log: "Got agentStorage"
+    - getHandle: resourceManager
+      as: rm
+    - log: "Got resourceManager, registering node types..."
+    - script: |
+        const { BTPrototypeFactory, sequenceDefinition, succeedDefinition, promptDefinition, subagentDefinition } = blackboard;
+        BTPrototypeFactory.clearCache();
+        BTPrototypeFactory._definitions.clear();
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('succeed', succeedDefinition);
+        BTPrototypeFactory.register('prompt', promptDefinition);
+        BTPrototypeFactory.register('subagent', subagentDefinition);
+    - log: "Node types registered, creating test agent..."
+    - script: |
+        blackboard.testAgentId = 'agent:test-simple-succeed';
+        const simpleAgent = {
+          id: blackboard.testAgentId,
+          name: 'TestSimpleSucceed',
+          version: 1,
+          behaviorTree: {
+            type: 'succeed',
+            name: 'Always Succeed'
+          },
+          prompts: {}
+        };
+        await blackboard.agentStorage.saveAgent(simpleAgent);
+    - log: "Test agent saved, creating loader..."
+    - script: |
+        // Get the actual ResourceManager singleton, not the handle
+        const { ResourceManager } = await import('@ng/handles-resource-manager');
+        const resourceManager = await ResourceManager.getInstance();
+        const { AgentLoader } = blackboard;
+        blackboard.loader = new AgentLoader({ resourceManager });
+    - log: "Subagent test setup complete"
+
+afterAll:
+  sequence:
+    - script: |
+        // Clean up test agent
+        try {
+          await blackboard.agentStorage.deleteAgent(blackboard.testAgentId);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+    - log: "Cleanup complete"
+
+children:
+  - name: "subagent node can load agent from storage"
+    sequence:
+      - script: |
+          const { loader, testAgentId } = blackboard;
+
+          // Agent that calls the test agent via subagent node
+          const parentAgent = {
+            id: 'agent:test-parent',
+            name: 'TestParent',
+            version: 1,
+            behaviorTree: {
+              type: 'subagent',
+              name: 'Call Child',
+              agentRef: testAgentId,
+              inputQuery: {},
+              outputUpdate: { childResult: '{{result}}' }
+            },
+            prompts: {}
+          };
+
+          blackboard.result = await loader.executeAgent(parentAgent, {
+            timeoutMs: 10000
+          });
+          console.log('Subagent result status:', blackboard.result?.status);
+
+      - assert: "{{result}} !== null && {{result}} !== undefined"
+        message: "result should be defined"
+
+      - assert: "{{result}}.status === 'SUCCESS'"
+        message: "subagent execution should succeed"
+
+  - name: "subagent node fails if agent not found"
+    sequence:
+      - script: |
+          const { loader } = blackboard;
+
+          const parentAgent = {
+            id: 'agent:test-parent-bad',
+            name: 'TestParentBad',
+            version: 1,
+            behaviorTree: {
+              type: 'subagent',
+              name: 'Call Missing',
+              agentRef: 'agent:does-not-exist',
+              inputQuery: {},
+              outputUpdate: {}
+            },
+            prompts: {}
+          };
+
+          blackboard.result = await loader.executeAgent(parentAgent, {
+            timeoutMs: 10000
+          });
+
+      - assert: "{{result}}.status === 'FAILED'"
+        message: "should fail when agent not found"
+
+      - assert: "{{result}}.error.includes('not found')"
+        message: "error should mention agent not found"

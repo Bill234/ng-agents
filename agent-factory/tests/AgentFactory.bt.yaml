@@ -10,12 +10,12 @@ description: |
 beforeAll:
   sequence:
     - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        from: "@ng/agents-definitions"
         exports:
           - AgentLoader
           - loadAgentByName
     - import:
-        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        from: "@ng/agents-agent-factory"
         exports:
           - AGENTS_DIR
     - script: |

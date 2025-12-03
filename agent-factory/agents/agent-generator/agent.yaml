@@ -1,0 +1,281 @@
+id: agent:agent-generator
+name: AgentGenerator
+version: 1
+purpose: Generates complete agent definition JSON from design and saves it
+tags:
+  - generation
+  - agent
+  - json
+  - save
+tools:
+  - AgentDefSave
+behaviorTree:
+  type: sequence
+  name: Generate Agent
+  children:
+    - type: prompt
+      name: Generate Agent Definition
+      promptRef: generateAgentDef
+      inputQuery:
+        design: "{{input.design}}"
+        spec: "{{input.spec}}"
+        builtSubAgents: "{{input.builtSubAgents}}"
+      outputUpdate:
+        generatedAgent: "{{result}}"
+    - type: selector
+      name: Save Sub-Agents If Any
+      children:
+        - type: sequence
+          name: Skip If No Sub-Agents
+          children:
+            - type: condition
+              name: No Pending Sub-Agents
+              check: "!pendingSubAgentSaves || pendingSubAgentSaves.length === 0"
+            - type: succeed
+              name: Skip Sub-Agent Saving
+        - type: repeat
+          name: Save Sub-Agents Loop
+          maxIterations: 20
+          until: "!pendingSubAgentSaves || pendingSubAgentSaves.length === 0"
+          child:
+            type: sequence
+            name: Save Next Sub-Agent
+            children:
+              - type: prompt
+                name: Pop Sub-Agent To Save
+                promptRef: popSubAgentToSave
+                inputQuery:
+                  pending: "{{pendingSubAgentSaves}}"
+                outputUpdate:
+                  currentSubAgent: "{{result.next}}"
+                  pendingSubAgentSaves: "{{result.remaining}}"
+              - type: action
+                name: Save Sub-Agent
+                tool: AgentDefSave
+                inputQuery:
+                  agentDef: "{{currentSubAgent}}"
+                outputUpdate:
+                  savedSubAgent: "{{result}}"
+    - type: action
+      name: Save Agent Definition
+      tool: AgentDefSave
+      inputQuery:
+        agentDef: "{{generatedAgent}}"
+      outputUpdate:
+        savedAgent: "{{result}}"
+prompts:
+  generateAgentDef:
+    version: 2
+    systemMessage: You are an expert at generating complete agent definitions. You
+      MUST use the EXACT values from the specification - never make up different
+      names or purposes. NEVER add pendingSubAgentSaves unless builtSubAgents is
+      explicitly provided and non-empty.
+    template: >-
+      Generate a complete agent definition from the specification and design.
+
+
+      ## CRITICAL REQUIREMENTS - READ CAREFULLY
+
+      1. The agent 'name' MUST be EXACTLY: {{spec.name}}
+
+      2. The agent 'purpose' MUST be EXACTLY: {{spec.purpose}}
+
+      3. The agent 'id' MUST be: agent:<lowercase spec.name with no spaces>
+
+      4. The behaviorTree MUST match the design exactly
+
+      5. Include all prompts from the design with complete templates
+
+      6. Every prompt with an outputSchema MUST include an 'examples' array
+
+      7. **NEVER invent or hallucinate sub-agents**
+
+      8. **pendingSubAgentSaves should ONLY exist if builtSubAgents below is
+      non-empty**
+
+
+      ## Prompt Definition Format
+
+      Each prompt MUST have:
+
+      - template: The prompt template with {{variables}}
+
+      - outputSchema: JSON schema for expected output
+
+      - examples: Array of {input: {...}, output: {...}} showing expected
+      behavior
+
+
+      ## Specification (USE THESE EXACT VALUES)
+
+      {{json spec}}
+
+
+      ## Design (FOLLOW THIS EXACTLY)
+
+      {{json design}}
+
+
+      ## Built Sub-Agents
+
+      {{json builtSubAgents}}
+
+
+      **IMPORTANT**: If builtSubAgents above is empty, null, or undefined, do
+      NOT include pendingSubAgentSaves in your output. Only include it if there
+      are actual sub-agents to save.
+
+
+      Generate the complete agent definition JSON now. Use the EXACT name
+      '{{spec.name}}' from the specification.
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: "^agent:"
+        version:
+          type: integer
+        name:
+          type: string
+        purpose:
+          type: string
+        tools:
+          type: array
+        behaviorTree:
+          type: object
+        prompts:
+          type: object
+      required:
+        - id
+        - version
+        - name
+        - behaviorTree
+        - prompts
+    examples:
+      - input:
+          spec:
+            name: MessageClassifier
+            purpose: "Classifies messages into categories: question, task, or feedback"
+          design:
+            behaviorTree:
+              type: prompt
+              name: Classify Message
+              promptRef: classifyMessage
+              inputQuery:
+                message: "{{input.message}}"
+              outputUpdate:
+                classification: "{{result.classification}}"
+                confidence: "{{result.confidence}}"
+            prompts:
+              classifyMessage:
+                template: "Classify the message into: question, task, or feedback.\\n\\nMessage:
+                  {{message}}"
+                outputSchema:
+                  type: object
+                  properties:
+                    classification:
+                      type: string
+                    confidence:
+                      type: number
+          builtSubAgents: null
+        output:
+          id: agent:messageclassifier
+          version: 1
+          name: MessageClassifier
+          purpose: "Classifies messages into categories: question, task, or feedback"
+          tools: []
+          behaviorTree:
+            type: prompt
+            name: Classify Message
+            promptRef: classifyMessage
+            inputQuery:
+              message: "{{input.message}}"
+            outputUpdate:
+              classification: "{{result.classification}}"
+              confidence: "{{result.confidence}}"
+          prompts:
+            classifyMessage:
+              template: "Classify the following message into one of: question, task, or
+                feedback.\\n\\nMessage: {{message}}\\n\\nReturn the
+                classification and a confidence score (0-1)."
+              outputSchema:
+                type: object
+                properties:
+                  classification:
+                    type: string
+                    enum:
+                      - question
+                      - task
+                      - feedback
+                  confidence:
+                    type: number
+                required:
+                  - classification
+                  - confidence
+              examples:
+                - input:
+                    message: How do I reset my password?
+                  output:
+                    classification: question
+                    confidence: 0.95
+                - input:
+                    message: Please update my email address
+                  output:
+                    classification: task
+                    confidence: 0.9
+  popSubAgentToSave:
+    version: 2
+    systemMessage: You extract the first item from a queue. Return null for next if
+      the queue is empty.
+    template: >-
+      Pop the next sub-agent from the pending save queue.
+
+
+      ## Pending Sub-Agents to Save
+
+      {{json pending}}
+
+
+      **IMPORTANT**: If the array is empty, null, or undefined, return {"next":
+      null, "remaining": []}.
+
+      Otherwise, return the first item as 'next' and the rest as 'remaining'.
+    outputFormat: json
+    outputSchema:
+      type: object
+      properties:
+        next:
+          type:
+            - object
+            - "null"
+        remaining:
+          type: array
+      required:
+        - next
+        - remaining
+    examples:
+      - input:
+          pending: []
+        output:
+          next: null
+          remaining: []
+      - input:
+          pending: null
+        output:
+          next: null
+          remaining: []
+      - input:
+          pending:
+            - id: agent:textformatter
+              name: TextFormatter
+            - id: agent:jsonparser
+              name: JsonParser
+        output:
+          next:
+            id: agent:textformatter
+            name: TextFormatter
+          remaining:
+            - id: agent:jsonparser
+              name: JsonParser

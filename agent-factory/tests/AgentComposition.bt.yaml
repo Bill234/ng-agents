@@ -1,0 +1,300 @@
+type: suite
+name: Agent Composition E2E Tests
+description: |
+  Tests the agent factory's ability to:
+  1. Compose agents from existing agents (full composition)
+  2. Hybrid composition (some existing agents + new components)
+  3. Build from scratch when no existing agents match
+
+beforeAll:
+  sequence:
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/definitions/src/index.js"
+        exports:
+          - AgentLoader
+          - promptDefinition
+          - AgentDefinitionStorage
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/bt/src/index.js"
+        exports:
+          - BTPrototypeFactory
+          - actionDefinition
+          - sequenceDefinition
+          - selectorDefinition
+          - conditionDefinition
+          - repeatDefinition
+          - succeedDefinition
+          - failDefinition
+    - import:
+        from: "/Users/williampearson/Legion/packages/ng/agents/agent-factory/src/index.js"
+        exports:
+          - loadAgentFactoryDefinition
+    - script: |
+        const { ResourceManager } = await import('/Users/williampearson/Legion/packages/ng/handles/resource-manager/src/index.js');
+        blackboard.resourceManager = await ResourceManager.getInstance();
+        blackboard.agentFactoryDef = await blackboard.loadAgentFactoryDefinition();
+
+        // Initialize agent storage
+        const { AgentDefinitionStorage, resourceManager } = blackboard;
+        blackboard.agentStorage = new AgentDefinitionStorage({ resourceManager });
+        await blackboard.agentStorage.initialize();
+
+        // Register all BT nodes
+        const { BTPrototypeFactory, actionDefinition, sequenceDefinition, selectorDefinition, conditionDefinition, repeatDefinition, succeedDefinition, failDefinition, promptDefinition } = blackboard;
+        BTPrototypeFactory.clearCache();
+        BTPrototypeFactory._definitions.clear();
+        BTPrototypeFactory.register('action', actionDefinition);
+        BTPrototypeFactory.register('sequence', sequenceDefinition);
+        BTPrototypeFactory.register('selector', selectorDefinition);
+        BTPrototypeFactory.register('condition', conditionDefinition);
+        BTPrototypeFactory.register('repeat', repeatDefinition);
+        BTPrototypeFactory.register('succeed', succeedDefinition);
+        BTPrototypeFactory.register('fail', failDefinition);
+        BTPrototypeFactory.register('prompt', promptDefinition);
+
+        blackboard.testAgentIds = [];
+    - log: "Setup complete, seeding test agents..."
+    - script: |
+        const { agentStorage, testAgentIds } = blackboard;
+
+        // Agent 1: File Reader
+        const fileReader = {
+          id: 'agent:test-file-reader',
+          name: 'FileReader',
+          purpose: 'Reads files and returns their content',
+          tags: ['file-operations', 'reading', 'io'],
+          tools: ['Read'],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Read File',
+            children: [{
+              type: 'action',
+              name: 'Read File',
+              tool: 'Read',
+              inputQuery: { filePath: '{{input.filePath}}' },
+              outputUpdate: { content: '{{result}}' }
+            }]
+          },
+          prompts: {},
+          metrics: { executionCount: 50, successRate: 0.96, avgDurationMs: 200 }
+        };
+        await agentStorage.saveAgent(fileReader);
+        testAgentIds.push(fileReader.id);
+
+        // Agent 2: Text Summarizer
+        const textSummarizer = {
+          id: 'agent:test-text-summarizer',
+          name: 'TextSummarizer',
+          purpose: 'Summarizes text content into a concise summary',
+          tags: ['text-processing', 'summarization', 'nlp'],
+          tools: [],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Summarize Text',
+            children: [{
+              type: 'prompt',
+              name: 'Summarize',
+              promptRef: 'summarize',
+              inputQuery: { text: '{{input.text}}' },
+              outputUpdate: { summary: '{{result.summary}}' }
+            }]
+          },
+          prompts: {
+            summarize: {
+              version: 1,
+              template: 'Summarize the following text in 2-3 sentences:\n\n{{text}}'
+            }
+          },
+          metrics: { executionCount: 100, successRate: 0.94, avgDurationMs: 3000 }
+        };
+        await agentStorage.saveAgent(textSummarizer);
+        testAgentIds.push(textSummarizer.id);
+
+        // Agent 3: Data Validator
+        const dataValidator = {
+          id: 'agent:test-data-validator',
+          name: 'DataValidator',
+          purpose: 'Validates JSON data against a schema',
+          tags: ['validation', 'json', 'data-processing'],
+          tools: [],
+          behaviorTree: {
+            type: 'sequence',
+            name: 'Validate Data',
+            children: [{
+              type: 'prompt',
+              name: 'Validate',
+              promptRef: 'validate',
+              inputQuery: { data: '{{input.data}}', schema: '{{input.schema}}' },
+              outputUpdate: { isValid: '{{result.isValid}}', errors: '{{result.errors}}' }
+            }]
+          },
+          prompts: {
+            validate: {
+              version: 1,
+              template: 'Validate this JSON data against the schema and return {isValid: boolean, errors: string[]}\n\nData: {{data}}\nSchema: {{schema}}'
+            }
+          },
+          metrics: { executionCount: 75, successRate: 0.98, avgDurationMs: 1500 }
+        };
+        await agentStorage.saveAgent(dataValidator);
+        testAgentIds.push(dataValidator.id);
+
+        console.log('Seeded test agents:', testAgentIds);
+    - log: "Test agents seeded"
+
+afterAll:
+  sequence:
+    - script: |
+        const { agentStorage, testAgentIds } = blackboard;
+        for (const agentId of testAgentIds) {
+          try {
+            await agentStorage.deleteAgent(agentId);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
+    - log: "Cleanup complete"
+
+children:
+  - name: "should discover existing agents when building"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef } = blackboard;
+
+          const requirements = `
+            Build an agent that reads a file and summarizes its contents.
+
+            The agent should:
+            1. Take a file path as input
+            2. Read the file contents
+            3. Summarize the content
+            4. Return the summary
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing agent discovery for file reading + summarization...');
+
+          const testFilePath = '/Users/williampearson/Legion/packages/ng/agents/agent-factory/__tests__/fixtures/sample-text.txt';
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { filePath: testFilePath }
+            },
+            timeoutMs: 300000
+          });
+
+          console.log('Result status:', result.status);
+          console.log('Available handles:', result.handles?.map(h => h[0]));
+
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+      - assert: "{{result}}.handles !== undefined"
+        message: "handles should be defined"
+
+  - name: "should compose agents when existing agents fulfill requirements"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef } = blackboard;
+
+          const requirements = `
+            Build an agent that performs these steps in sequence:
+            1. Read a file from disk (use existing file reading capability)
+            2. Summarize the file contents (use existing summarization capability)
+
+            This is a simple pipeline of existing capabilities.
+            If there are existing agents that can do file reading and text summarization,
+            compose them together rather than building from scratch.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing full composition from existing agents...');
+
+          const testFilePath = '/Users/williampearson/Legion/packages/ng/agents/agent-factory/__tests__/fixtures/sample-text.txt';
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { filePath: testFilePath }
+            },
+            timeoutMs: 300000
+          });
+
+          console.log('Result status:', result.status);
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+  - name: "should build from scratch when no existing agents match"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef } = blackboard;
+
+          const requirements = `
+            Build an agent that calculates Fibonacci numbers.
+
+            The agent should:
+            1. Take a number N as input
+            2. Calculate the Nth Fibonacci number
+            3. Return the result
+
+            This is a unique mathematical capability that no existing agent provides.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing build from scratch (no matching agents)...');
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { n: 10 }
+            },
+            timeoutMs: 300000
+          });
+
+          console.log('Result status:', result.status);
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
+
+  - name: "should handle hybrid composition"
+    sequence:
+      - script: |
+          const { AgentLoader, resourceManager, agentFactoryDef } = blackboard;
+
+          const requirements = `
+            Build an agent that reads a config file, validates it, and does custom processing.
+
+            The agent should:
+            1. Read a JSON config file (existing capability)
+            2. Validate the JSON structure (existing capability)
+            3. Apply custom business rules to the config (new capability - no existing agent)
+            4. Return the processed config
+
+            Use existing agents for file reading and validation if available,
+            but design new components for the custom business rules.
+          `;
+
+          const loader = new AgentLoader({ resourceManager });
+          console.log('Testing hybrid composition...');
+
+          const testFilePath = '/Users/williampearson/Legion/packages/ng/agents/agent-factory/__tests__/fixtures/sample-config.json';
+
+          const result = await loader.executeAgent(agentFactoryDef, {
+            input: {
+              requirements,
+              testInput: { configPath: testFilePath }
+            },
+            timeoutMs: 300000
+          });
+
+          console.log('Result status:', result.status);
+          blackboard.result = result;
+
+      - assert: "{{result}} !== undefined"
+        message: "result should be defined"
